@@ -1,5 +1,8 @@
-#include <iostream>
-#include <stdexcept>
+/**
+ * @file main.cpp
+ */
+#include "crddagt/common/common.hpp"
+#include "crddagt/common/opaque_ptr_key.hpp"
 
 int main(int argc, char** argv)
 {
