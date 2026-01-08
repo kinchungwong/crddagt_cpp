@@ -8,18 +8,51 @@ namespace crddagt
 {
 
 /**
- * @brief An opaque key representing a pointer to an object of type T.
- * @note Can be constructed from raw pointers, smart pointers, and weak pointers.
- * @note The key encapsulates a snapshot of the underlying raw pointer at the time of creation.
- * @note Type-parameterized; no operators are defined between different types of T.
- * @note If constructed from a weak pointer that has expired at the time of key creation, the key will be null.
- * @note Hashable, and is in fact designed to facilitate usage in hash-based containers.
- * @note Non-owning; does not manage the lifetime of the underlying object.
- * @note Correct usage requires the lifetime of the underlying object to outlive the key.
- * @warning Incorrect usage runs risk of false positives in case of underlying object being destroyed and its address reused.
- * @note Comparison operators compare the underlying pointer addresses after casting into `std::uintptr_t`.
- * @note Value-like semantics: can be trivially copied and assigned.
- * @note Thread semantics: acts like a built-in integer type; no internal synchronization.
+ * @brief A non-dereferenceable, hashable identifier derived from a pointer address.
+ *
+ * @details
+ * OpaquePtrKey captures a pointer's address as a `std::uintptr_t` at construction time,
+ * enabling use as a key in hash-based and ordered containers. The original pointer
+ * cannot be recovered; the key serves only for identity comparison and hashing.
+ *
+ * @par Construction
+ * - From `const T*` (raw pointer)
+ * - From `std::unique_ptr<T>` or `std::unique_ptr<const T>`
+ * - From `std::shared_ptr<T>` or `std::shared_ptr<const T>`
+ * - From `std::weak_ptr<T>` or `std::weak_ptr<const T>` (captures current lock state)
+ * - No default constructor; must be initialized from a pointer source.
+ * - If constructed from an expired `std::weak_ptr`, the key is null.
+ *
+ * @par Null state
+ * - A key is null if constructed from `nullptr` or an expired `std::weak_ptr`.
+ * - Test with `!key` (returns true if null). No `operator bool()` is provided.
+ *
+ * @par Type safety
+ * - Template parameter `T` provides type-level separation.
+ * - Comparison operators only accept `OpaquePtrKey<T>` with the same `T`.
+ * - Hash values incorporate `typeid(T)`, so keys from different `T` hash differently
+ *   even if derived from the same address.
+ *
+ * @par Ownership and lifetime
+ * - Non-owning: does not prevent destruction of the pointed-to object.
+ * - The key remains valid (as a numeric value) after the object is destroyed.
+ * - Constraint: the key should not be used for identity lookup after the object's
+ *   destruction, because address reuse may cause a different object to compare equal
+ *   (identity collision).
+ * - Recommended safeguard: containers should consider owning the objects via
+ *   `std::shared_ptr` so that the keys remain valid and unique.
+ *
+ * @par Value semantics
+ * - Trivially copyable and assignable.
+ * - All comparison operators (`==`, `!=`, `<`, `>`, `<=`, `>=`) compare the stored
+ *   `std::uintptr_t` values directly.
+ *
+ * @par Thread safety
+ * - Equivalent to a `std::uintptr_t`: no internal synchronization.
+ * - Concurrent reads are safe; concurrent read/write requires external synchronization.
+ *
+ * @par Standard library integration
+ * - `std::hash<OpaquePtrKey<T>>` specialization provided.
  */
 template <typename T>
 class OpaquePtrKey
