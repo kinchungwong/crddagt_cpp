@@ -2,11 +2,13 @@
  * @file graph_core.hpp
  */
 #pragma once
+#include <optional>
 #include "crddagt/common/common.hpp"
 #include "crddagt/common/graph_core_enums.hpp"
 #include "crddagt/common/graph_core_exceptions.hpp"
 #include "crddagt/common/graph_core_diagnostics.hpp"
 #include "crddagt/common/exported_graph.hpp"
+#include "crddagt/common/iterable_union_find.hpp"
 
 namespace crddagt
 {
@@ -149,6 +151,11 @@ private:
     /// Indexed by step index.
     std::vector<std::vector<FieldIdx>> m_step_fields;
 
+    /// Forward adjacency list for step dependencies (explicit + implicit).
+    /// m_step_successors[s] contains steps that s has edges to.
+    /// Used for eager cycle detection via reachability queries.
+    std::vector<std::vector<StepIdx>> m_step_successors;
+
     // -------------------------------------------------------------------------
     // Field tracking
     // -------------------------------------------------------------------------
@@ -179,12 +186,9 @@ private:
     // Field links (equivalence classes)
     // -------------------------------------------------------------------------
 
-    /// Union-find parent array for field equivalence classes.
-    /// m_field_uf_parent[i] == i means i is a root.
-    mutable std::vector<FieldIdx> m_field_uf_parent;
-
-    /// Union-find rank array for balanced merging.
-    mutable std::vector<size_t> m_field_uf_rank;
+    /// Union-find structure for field equivalence classes.
+    /// Provides O(α(n)) find/unite and O(class_size) iteration.
+    mutable IterableUnionFind<FieldIdx> m_field_uf;
 
     /// Field link edges: (field_one_idx, field_two_idx).
     std::vector<std::pair<FieldIdx, FieldIdx>> m_field_links;
@@ -193,14 +197,23 @@ private:
     std::vector<TrustLevel> m_field_link_trust;
 
     // -------------------------------------------------------------------------
-    // Union-find helpers
+    // Cycle detection helpers
     // -------------------------------------------------------------------------
 
-    /// Find the root of the equivalence class containing field_idx.
-    FieldIdx uf_find(FieldIdx field_idx) const;
+    /// Check if target is reachable from 'from' in the step successor graph.
+    /// Used for eager cycle detection.
+    bool is_reachable_from(StepIdx from, StepIdx target) const;
 
-    /// Unite the equivalence classes containing field_a and field_b.
-    void uf_unite(FieldIdx field_a, FieldIdx field_b);
+    /// Determine the implicit edge induced by two field usages.
+    /// @param step_a Step index of first field
+    /// @param usage_a Usage of first field
+    /// @param step_b Step index of second field
+    /// @param usage_b Usage of second field
+    /// @return Optional (before, after) step pair if an edge is induced, nullopt for same usage
+    /// @pre usage_a and usage_b are not both Create, nor both Destroy
+    ///      (caught by UsageConstraintViolation check before this is called)
+    static std::optional<std::pair<StepIdx, StepIdx>> get_implicit_edge(
+        StepIdx step_a, Usage usage_a, StepIdx step_b, Usage usage_b);
 
     // -------------------------------------------------------------------------
     // Diagnostic helpers

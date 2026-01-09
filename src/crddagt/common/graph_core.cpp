@@ -54,6 +54,7 @@ void GraphCore::add_step(size_t step_idx)
     }
 
     m_step_fields.emplace_back();
+    m_step_successors.emplace_back();
     ++m_step_count;
 }
 
@@ -90,9 +91,8 @@ void GraphCore::add_field(size_t step_idx, size_t field_idx, std::type_index ti,
     m_field_types.push_back(ti);
     m_field_usages.push_back(usage);
 
-    // Initialize union-find for this field (each field starts as its own root)
-    m_field_uf_parent.push_back(field_idx);
-    m_field_uf_rank.push_back(0);
+    // Initialize union-find for this field (each field starts as its own singleton set)
+    m_field_uf.make_set();
 
     ++m_field_count;
 }
@@ -125,12 +125,27 @@ void GraphCore::link_steps(size_t step_before_idx, size_t step_after_idx, TrustL
             "Cannot link step " + std::to_string(step_before_idx) + " to itself");
     }
 
+    // Eager cycle detection: check if adding this edge would create a cycle
+    // A cycle would exist if step_before_idx is already reachable from step_after_idx
+    if (m_eager_validation)
+    {
+        if (is_reachable_from(step_after_idx, step_before_idx))
+        {
+            throw GraphCoreError(
+                GraphCoreErrorCode::CycleDetected,
+                "Adding edge " + std::to_string(step_before_idx) + " -> " +
+                    std::to_string(step_after_idx) +
+                    " would create a cycle (step " + std::to_string(step_before_idx) +
+                    " is reachable from step " + std::to_string(step_after_idx) + ")");
+        }
+    }
+
     // Store the link
     m_explicit_step_links.emplace_back(step_before_idx, step_after_idx);
     m_explicit_step_link_trust.push_back(trust);
 
-    // Note: Cycle detection for non-trivial cycles is deferred to get_diagnostics()
-    // unless eager validation is enabled. Full cycle detection requires graph traversal.
+    // Update step successors adjacency list for future cycle checks
+    m_step_successors[step_before_idx].push_back(step_after_idx);
 }
 
 // ============================================================================
@@ -171,55 +186,210 @@ void GraphCore::link_fields(size_t field_one_idx, size_t field_two_idx, TrustLev
                 m_field_types[field_two_idx].name() + ")");
     }
 
+    // Check if already in same equivalence class
+    FieldIdx root_one = m_field_uf.find(field_one_idx);
+    FieldIdx root_two = m_field_uf.find(field_two_idx);
+    if (root_one == root_two)
+    {
+        // Already linked; store the redundant link but no merge needed
+        m_field_links.emplace_back(field_one_idx, field_two_idx);
+        m_field_link_trust.push_back(trust);
+        return;
+    }
+
+    // Eager validation: check usage constraints and cycles before merging
+    if (m_eager_validation)
+    {
+        // Collect all fields in each equivalence class
+        std::vector<FieldIdx> class_one;
+        std::vector<FieldIdx> class_two;
+        m_field_uf.get_class_members(field_one_idx, class_one);
+        m_field_uf.get_class_members(field_two_idx, class_two);
+
+        // Count Creates and Destroys in each class
+        size_t creates_one = 0, destroys_one = 0;
+        size_t creates_two = 0, destroys_two = 0;
+
+        for (FieldIdx f : class_one)
+        {
+            if (m_field_usages[f] == Usage::Create) ++creates_one;
+            else if (m_field_usages[f] == Usage::Destroy) ++destroys_one;
+        }
+        for (FieldIdx f : class_two)
+        {
+            if (m_field_usages[f] == Usage::Create) ++creates_two;
+            else if (m_field_usages[f] == Usage::Destroy) ++destroys_two;
+        }
+
+        // Check for multiple Creates
+        if (creates_one + creates_two > 1)
+        {
+            throw GraphCoreError(
+                GraphCoreErrorCode::UsageConstraintViolation,
+                "Linking fields would result in multiple Create fields for same data");
+        }
+
+        // Check for multiple Destroys
+        if (destroys_one + destroys_two > 1)
+        {
+            throw GraphCoreError(
+                GraphCoreErrorCode::UsageConstraintViolation,
+                "Linking fields would result in multiple Destroy fields for same data");
+        }
+
+        // Check for self-aliasing: same step with incompatible usages across the merge
+        // Build map of step -> usages from the merged class
+        std::unordered_map<StepIdx, std::vector<Usage>> merged_step_usages;
+        for (FieldIdx f : class_one)
+        {
+            merged_step_usages[m_field_owner_step[f]].push_back(m_field_usages[f]);
+        }
+        for (FieldIdx f : class_two)
+        {
+            merged_step_usages[m_field_owner_step[f]].push_back(m_field_usages[f]);
+        }
+
+        for (const auto& [sidx, usages] : merged_step_usages)
+        {
+            if (usages.size() > 1)
+            {
+                // Check if all usages are Read - that's allowed
+                bool all_reads = true;
+                for (Usage u : usages)
+                {
+                    if (u != Usage::Read)
+                    {
+                        all_reads = false;
+                        break;
+                    }
+                }
+
+                if (!all_reads)
+                {
+                    throw GraphCoreError(
+                        GraphCoreErrorCode::UsageConstraintViolation,
+                        "Self-aliasing: step " + std::to_string(sidx) +
+                            " would have incompatible field usages for same data");
+                }
+            }
+        }
+
+        // Check for cycles from all cross-class induced edges
+        std::vector<std::pair<StepIdx, StepIdx>> new_edges;
+
+        for (FieldIdx fa : class_one)
+        {
+            for (FieldIdx fb : class_two)
+            {
+                StepIdx step_a = m_field_owner_step[fa];
+                StepIdx step_b = m_field_owner_step[fb];
+
+                if (step_a == step_b)
+                {
+                    continue; // Same step, no edge (self-aliasing already checked)
+                }
+
+                auto edge = get_implicit_edge(step_a, m_field_usages[fa],
+                                               step_b, m_field_usages[fb]);
+                if (edge.has_value())
+                {
+                    auto [before, after] = edge.value();
+
+                    // Check if this creates a cycle
+                    if (is_reachable_from(after, before))
+                    {
+                        throw GraphCoreError(
+                            GraphCoreErrorCode::CycleDetected,
+                            "Linking fields would create a cycle: implicit edge " +
+                                std::to_string(before) + " -> " + std::to_string(after) +
+                                " conflicts with existing path from " +
+                                std::to_string(after) + " to " + std::to_string(before));
+                    }
+
+                    new_edges.push_back(edge.value());
+                }
+            }
+        }
+
+        // All checks passed; add the new implicit edges to step successors
+        for (const auto& [before, after] : new_edges)
+        {
+            m_step_successors[before].push_back(after);
+        }
+    }
+
     // Store the link edge
     m_field_links.emplace_back(field_one_idx, field_two_idx);
     m_field_link_trust.push_back(trust);
 
     // Unite equivalence classes
-    uf_unite(field_one_idx, field_two_idx);
-
-    // Note: Usage constraint validation (e.g., two Creates) is deferred to
-    // get_diagnostics() where all fields in the equivalence class can be analyzed.
+    m_field_uf.unite(field_one_idx, field_two_idx);
 }
 
 // ============================================================================
-// Union-find helpers
+// Cycle detection helpers
 // ============================================================================
 
-FieldIdx GraphCore::uf_find(FieldIdx field_idx) const
+std::optional<std::pair<StepIdx, StepIdx>> GraphCore::get_implicit_edge(
+    StepIdx step_a, Usage usage_a, StepIdx step_b, Usage usage_b)
 {
-    // Path compression: make every node point directly to the root
-    if (m_field_uf_parent[field_idx] != field_idx)
-    {
-        m_field_uf_parent[field_idx] = uf_find(m_field_uf_parent[field_idx]);
-    }
-    return m_field_uf_parent[field_idx];
-}
+    // Usage ordering: Create=0 < Read=1 < Destroy=2
+    // Precondition: not both Create, not both Destroy (caught earlier)
+    int order_a = static_cast<int>(usage_a);
+    int order_b = static_cast<int>(usage_b);
 
-void GraphCore::uf_unite(FieldIdx field_a, FieldIdx field_b)
-{
-    FieldIdx root_a = uf_find(field_a);
-    FieldIdx root_b = uf_find(field_b);
-
-    if (root_a == root_b)
+    if (order_a < order_b)
     {
-        return; // Already in the same set
+        return std::make_pair(step_a, step_b); // step_a → step_b
     }
-
-    // Union by rank: attach smaller tree under root of larger tree
-    if (m_field_uf_rank[root_a] < m_field_uf_rank[root_b])
+    else if (order_b < order_a)
     {
-        m_field_uf_parent[root_a] = root_b;
-    }
-    else if (m_field_uf_rank[root_a] > m_field_uf_rank[root_b])
-    {
-        m_field_uf_parent[root_b] = root_a;
+        return std::make_pair(step_b, step_a); // step_b → step_a
     }
     else
     {
-        m_field_uf_parent[root_b] = root_a;
-        ++m_field_uf_rank[root_a];
+        // Same usage (Read-Read only, given precondition)
+        return std::nullopt;
     }
+}
+
+bool GraphCore::is_reachable_from(StepIdx from, StepIdx target) const
+{
+    if (from == target)
+    {
+        return true;
+    }
+
+    // Iterative DFS
+    std::vector<bool> visited(m_step_count, false);
+    std::vector<StepIdx> stack;
+    stack.push_back(from);
+
+    while (!stack.empty())
+    {
+        StepIdx current = stack.back();
+        stack.pop_back();
+
+        if (visited[current])
+        {
+            continue;
+        }
+        visited[current] = true;
+
+        for (StepIdx successor : m_step_successors[current])
+        {
+            if (successor == target)
+            {
+                return true;
+            }
+            if (!visited[successor])
+            {
+                stack.push_back(successor);
+            }
+        }
+    }
+
+    return false;
 }
 
 // ============================================================================
@@ -239,7 +409,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
 
     for (FieldIdx fidx = 0; fidx < m_field_count; ++fidx)
     {
-        FieldIdx root = uf_find(fidx);
+        FieldIdx root = m_field_uf.find(fidx);
         equiv_classes[root].emplace_back(fidx, m_field_owner_step[fidx], m_field_usages[fidx]);
     }
 
@@ -555,8 +725,8 @@ void GraphCore::add_field_link_blame(DiagnosticItem& item,
         const auto& [f1, f2] = m_field_links[i];
         // Check if this link connects two fields in the involved set
         // or connects a field in the set to another in the same equivalence class
-        FieldIdx root1 = uf_find(f1);
-        FieldIdx root2 = uf_find(f2);
+        FieldIdx root1 = m_field_uf.find(f1);
+        FieldIdx root2 = m_field_uf.find(f2);
         bool f1_involved = field_set.count(f1) > 0;
         bool f2_involved = field_set.count(f2) > 0;
 
@@ -629,7 +799,7 @@ std::shared_ptr<ExportedGraph> GraphCore::export_graph() const
 
     for (FieldIdx fidx = 0; fidx < m_field_count; ++fidx)
     {
-        FieldIdx root = uf_find(fidx);
+        FieldIdx root = m_field_uf.find(fidx);
         auto it = root_to_data.find(root);
         if (it == root_to_data.end())
         {
@@ -645,7 +815,7 @@ std::shared_ptr<ExportedGraph> GraphCore::export_graph() const
 
     for (FieldIdx fidx = 0; fidx < m_field_count; ++fidx)
     {
-        FieldIdx root = uf_find(fidx);
+        FieldIdx root = m_field_uf.find(fidx);
         DataIdx didx = root_to_data[root];
         StepIdx sidx = m_field_owner_step[fidx];
         Usage usage = m_field_usages[fidx];

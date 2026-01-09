@@ -26,6 +26,65 @@ TEST(GraphCoreDiagnosticsTests, Cycle_SelfLoopExplicitStepLink)
     EXPECT_THROW(graph.link_steps(0, 0, TrustLevel::Middle), GraphCoreError);
 }
 
+TEST(GraphCoreDiagnosticsTests, Cycle_TwoStepExplicitCycle_Eager)
+{
+    // A→B and B→A creates a cycle - should throw immediately on second link
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.link_steps(0, 1, TrustLevel::Middle); // A→B succeeds
+
+    // B→A should throw immediately
+    EXPECT_THROW(graph.link_steps(1, 0, TrustLevel::Middle), GraphCoreError);
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_ThreeStepExplicitCycle_Eager)
+{
+    // A→B→C then C→A creates a cycle - should throw on third link
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_step(2);
+    graph.link_steps(0, 1, TrustLevel::Middle); // A→B
+    graph.link_steps(1, 2, TrustLevel::Middle); // B→C
+
+    // C→A should throw immediately
+    EXPECT_THROW(graph.link_steps(2, 0, TrustLevel::Middle), GraphCoreError);
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_ValidDAG_Eager)
+{
+    // Valid DAG should not throw
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_step(2);
+
+    // Build a valid DAG: A→B, A→C, B→C
+    EXPECT_NO_THROW(graph.link_steps(0, 1, TrustLevel::High));
+    EXPECT_NO_THROW(graph.link_steps(0, 2, TrustLevel::High));
+    EXPECT_NO_THROW(graph.link_steps(1, 2, TrustLevel::High));
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_LongerCycle_Eager)
+{
+    // A→B→C→D→E then E→A creates a cycle
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_step(2);
+    graph.add_step(3);
+    graph.add_step(4);
+
+    graph.link_steps(0, 1, TrustLevel::High);
+    graph.link_steps(1, 2, TrustLevel::High);
+    graph.link_steps(2, 3, TrustLevel::High);
+    graph.link_steps(3, 4, TrustLevel::High);
+
+    // E→A should throw immediately
+    EXPECT_THROW(graph.link_steps(4, 0, TrustLevel::Low), GraphCoreError);
+}
+
 TEST(GraphCoreDiagnosticsTests, Cycle_TwoStepExplicitCycle_NonEager)
 {
     // A→B and B→A creates a cycle
@@ -164,6 +223,121 @@ TEST(GraphCoreDiagnosticsTests, Cycle_NoCycleInValidDAG)
         }
     }
     EXPECT_FALSE(found_cycle);
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_ImplicitFromUsageOrdering_Eager)
+{
+    // Step 0: Create data D
+    // Step 1: Destroy data D
+    // Explicit link: Step 1 → Step 0 (Destroy before Create)
+    // Implicit link: Step 0 → Step 1 (Create before Destroy)
+    // This creates a cycle - should throw on field link
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(1, 1, typeid(int), Usage::Destroy);
+    graph.link_steps(1, 0, TrustLevel::Low); // Explicit: Destroy step before Create step
+
+    // Linking fields induces implicit edge Create→Destroy (0→1)
+    // Combined with explicit 1→0, this forms a cycle
+    EXPECT_THROW(graph.link_fields(0, 1, TrustLevel::High), GraphCoreError);
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_MixedExplicitAndImplicit_Eager)
+{
+    // Step 0: Create data D
+    // Step 1: Read data D
+    // Explicit link: Step 1 → Step 0
+    // Implicit link: Step 0 → Step 1 (Create before Read)
+    // Cycle detected on field link
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(1, 1, typeid(int), Usage::Read);
+    graph.link_steps(1, 0, TrustLevel::Low);
+
+    EXPECT_THROW(graph.link_fields(0, 1, TrustLevel::High), GraphCoreError);
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_ValidFieldLinks_Eager)
+{
+    // Valid data flow: Create → Read → Destroy
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_step(2);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(1, 1, typeid(int), Usage::Read);
+    graph.add_field(2, 2, typeid(int), Usage::Destroy);
+
+    EXPECT_NO_THROW(graph.link_fields(0, 1, TrustLevel::High));
+    EXPECT_NO_THROW(graph.link_fields(1, 2, TrustLevel::High));
+}
+
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleCreate_Eager)
+{
+    // Two Create fields linked = error (eager mode throws immediately)
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(1, 1, typeid(int), Usage::Create);
+
+    EXPECT_THROW(graph.link_fields(0, 1, TrustLevel::Middle), GraphCoreError);
+}
+
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleDestroy_Eager)
+{
+    // Two Destroy fields linked = error (eager mode throws immediately)
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_step(2);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(1, 1, typeid(int), Usage::Destroy);
+    graph.add_field(2, 2, typeid(int), Usage::Destroy);
+
+    graph.link_fields(0, 1, TrustLevel::Middle); // Create + Destroy OK
+    EXPECT_THROW(graph.link_fields(1, 2, TrustLevel::Middle), GraphCoreError); // Second Destroy
+}
+
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndRead_Eager)
+{
+    // Same step has both Create and Read for same data = error
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(0, 1, typeid(int), Usage::Read);
+
+    EXPECT_THROW(graph.link_fields(0, 1, TrustLevel::Middle), GraphCoreError);
+}
+
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndDestroy_Eager)
+{
+    // Same step has both Create and Destroy for same data = error
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(0, 1, typeid(int), Usage::Destroy);
+
+    EXPECT_THROW(graph.link_fields(0, 1, TrustLevel::Middle), GraphCoreError);
+}
+
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_TransitiveDoubleCreate_Eager)
+{
+    // A(Create) ↔ B(Read), then B ↔ C(Create) - transitively links two Creates
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_step(2);
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(1, 1, typeid(int), Usage::Read);
+    graph.add_field(2, 2, typeid(int), Usage::Create);
+
+    graph.link_fields(0, 1, TrustLevel::High); // Create ↔ Read OK
+    EXPECT_THROW(graph.link_fields(1, 2, TrustLevel::High), GraphCoreError); // Merges classes, two Creates
 }
 
 TEST(GraphCoreDiagnosticsTests, Cycle_BlameOrdersByTrustLevel_NonEager)
