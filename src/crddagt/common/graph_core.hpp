@@ -201,6 +201,18 @@ private:
 
     /// Unite the equivalence classes containing field_a and field_b.
     void uf_unite(FieldIdx field_a, FieldIdx field_b);
+
+    // -------------------------------------------------------------------------
+    // Diagnostic helpers
+    // -------------------------------------------------------------------------
+
+    /// Add blamed field links to diagnostic item, ordered by trust level.
+    void add_field_link_blame(DiagnosticItem& item,
+                              const std::vector<FieldIdx>& involved_fields) const;
+
+    /// Add blamed step links to diagnostic item, ordered by trust level.
+    void add_step_link_blame(DiagnosticItem& item,
+                             const std::vector<StepIdx>& involved_steps) const;
 };
 
 } // namespace crddagt

@@ -26,10 +26,10 @@ TEST(GraphCoreDiagnosticsTests, Cycle_SelfLoopExplicitStepLink)
     EXPECT_THROW(graph.link_steps(0, 0, TrustLevel::Middle), GraphCoreError);
 }
 
-TEST(GraphCoreDiagnosticsTests, Cycle_TwoStepExplicitCycle)
+TEST(GraphCoreDiagnosticsTests, Cycle_TwoStepExplicitCycle_NonEager)
 {
     // A→B and B→A creates a cycle
-    GraphCore graph(false); // lazy validation
+    GraphCore graph(false); // non-eager: cycle detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.link_steps(0, 1, TrustLevel::Middle);
@@ -54,10 +54,10 @@ TEST(GraphCoreDiagnosticsTests, Cycle_TwoStepExplicitCycle)
     EXPECT_TRUE(found_cycle);
 }
 
-TEST(GraphCoreDiagnosticsTests, Cycle_ThreeStepExplicitCycle)
+TEST(GraphCoreDiagnosticsTests, Cycle_ThreeStepExplicitCycle_NonEager)
 {
     // A→B→C→A creates a cycle
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: cycle detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_step(2);
@@ -81,14 +81,14 @@ TEST(GraphCoreDiagnosticsTests, Cycle_ThreeStepExplicitCycle)
     EXPECT_TRUE(found_cycle);
 }
 
-TEST(GraphCoreDiagnosticsTests, Cycle_ImplicitFromUsageOrdering)
+TEST(GraphCoreDiagnosticsTests, Cycle_ImplicitFromUsageOrdering_NonEager)
 {
     // Step 0: Create data D
     // Step 1: Destroy data D
     // Explicit link: Step 1 → Step 0 (Destroy before Create)
     // Implicit link: Step 0 → Step 1 (Create before Destroy)
     // This creates a cycle: 0→1 (implicit) and 1→0 (explicit)
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: cycle detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_field(0, 0, typeid(int), Usage::Create);
@@ -111,14 +111,14 @@ TEST(GraphCoreDiagnosticsTests, Cycle_ImplicitFromUsageOrdering)
     EXPECT_TRUE(found_cycle);
 }
 
-TEST(GraphCoreDiagnosticsTests, Cycle_MixedExplicitAndImplicit)
+TEST(GraphCoreDiagnosticsTests, Cycle_MixedExplicitAndImplicit_NonEager)
 {
     // Step 0: Create data D
     // Step 1: Read data D
     // Explicit link: Step 1 → Step 0 (Read before Create)
     // Implicit link: Step 0 → Step 1 (Create before Read)
     // Cycle detected
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: cycle detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_field(0, 0, typeid(int), Usage::Create);
@@ -166,11 +166,11 @@ TEST(GraphCoreDiagnosticsTests, Cycle_NoCycleInValidDAG)
     EXPECT_FALSE(found_cycle);
 }
 
-TEST(GraphCoreDiagnosticsTests, Cycle_BlameOrdersByTrustLevel)
+TEST(GraphCoreDiagnosticsTests, Cycle_BlameOrdersByTrustLevel_NonEager)
 {
     // Create a cycle with mixed trust levels
     // Lower trust links should appear first in blamed_step_links
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: cycle detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.link_steps(0, 1, TrustLevel::High); // index 0
@@ -196,10 +196,10 @@ TEST(GraphCoreDiagnosticsTests, Cycle_BlameOrdersByTrustLevel)
 // Usage Constraint Tests
 // ============================================================================
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleCreate)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleCreate_NonEager)
 {
     // Two Create fields linked to same data = error
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_field(0, 0, typeid(int), Usage::Create);
@@ -221,10 +221,10 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleCreate)
     EXPECT_TRUE(found_usage);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleDestroy)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleDestroy_NonEager)
 {
     // Two Destroy fields linked to same data = error
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_step(2);
@@ -249,10 +249,10 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleDestroy)
     EXPECT_TRUE(found_usage);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_MissingCreate)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_MissingCreate_NonEager)
 {
     // Data with only Read/Destroy but no Create = error
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_field(0, 0, typeid(int), Usage::Read);
@@ -274,11 +274,11 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_MissingCreate)
     EXPECT_TRUE(found_usage);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndRead)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndRead_NonEager)
 {
     // Same step has both Create and Read for same data
     // This is self-aliasing: step reads data it also creates
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_field(0, 0, typeid(int), Usage::Create);
     graph.add_field(0, 1, typeid(int), Usage::Read);
@@ -299,10 +299,10 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndRead)
     EXPECT_TRUE(found_usage);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndDestroy)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndDestroy_NonEager)
 {
     // Same step has both Create and Destroy for same data
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_field(0, 0, typeid(int), Usage::Create);
     graph.add_field(0, 1, typeid(int), Usage::Destroy);
@@ -323,10 +323,10 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndDestroy)
     EXPECT_TRUE(found_usage);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasReadAndDestroy)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasReadAndDestroy_NonEager)
 {
     // Same step has both Read and Destroy for same data
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_field(0, 0, typeid(int), Usage::Create);
@@ -348,6 +348,25 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasReadAndDestroy)
         }
     }
     EXPECT_TRUE(found_usage);
+}
+
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasDoubleReadAllowed)
+{
+    // Same step has two Read fields for the same data
+    // This should be allowed - a step can read the same data through multiple fields
+    GraphCore graph(false);
+    graph.add_step(0); // Creator
+    graph.add_step(1); // Reader (reads same data twice)
+    graph.add_field(0, 0, typeid(int), Usage::Create);
+    graph.add_field(1, 1, typeid(int), Usage::Read);
+    graph.add_field(1, 2, typeid(int), Usage::Read);
+    graph.link_fields(0, 1, TrustLevel::High);
+    graph.link_fields(1, 2, TrustLevel::High); // Both reads alias same data
+
+    auto diag = graph.get_diagnostics();
+    EXPECT_FALSE(diag->has_errors()) << "Double read on same step should not be an error";
+    EXPECT_FALSE(diag->has_warnings()) << "Double read on same step should not be a warning";
+    EXPECT_TRUE(diag->is_valid());
 }
 
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_ValidCreateOnly)
@@ -449,12 +468,12 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_ValidCreateAndDestroy)
     EXPECT_FALSE(found_usage_error);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_TransitiveDoubleCreate)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_TransitiveDoubleCreate_NonEager)
 {
     // A(Create) ↔ B(Read) ↔ C(Create)
     // Through transitivity, A and C are in same equivalence class
     // This means two Creates for same data = error
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_step(2);
@@ -479,10 +498,10 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_TransitiveDoubleCreate)
     EXPECT_TRUE(found_usage);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_BlameOrdersByTrustLevel)
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_BlameOrdersByTrustLevel_NonEager)
 {
     // Double create with mixed trust levels on field links
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_step(2);
@@ -706,10 +725,10 @@ TEST(GraphCoreDiagnosticsTests, API_EmptyGraphNoWarnings)
     EXPECT_TRUE(diag->warnings().empty());
 }
 
-TEST(GraphCoreDiagnosticsTests, API_ErrorMakesInvalid)
+TEST(GraphCoreDiagnosticsTests, API_ErrorMakesInvalid_NonEager)
 {
     // Create a cycle to generate an error
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: cycle detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.link_steps(0, 1, TrustLevel::Middle);
@@ -734,11 +753,11 @@ TEST(GraphCoreDiagnosticsTests, API_WarningStillValid)
     EXPECT_TRUE(diag->is_valid());
 }
 
-TEST(GraphCoreDiagnosticsTests, API_AllItemsErrorsFirst)
+TEST(GraphCoreDiagnosticsTests, API_AllItemsErrorsFirst_NonEager)
 {
     // Create both an error and a warning
     // Cycle error + orphan step in another step
-    GraphCore graph(false);
+    GraphCore graph(false); // non-eager: cycle detected in get_diagnostics()
     graph.add_step(0);
     graph.add_step(1);
     graph.add_step(2); // orphan step

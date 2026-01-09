@@ -4,6 +4,10 @@
 - Date: 2026-01-08 (America/Los_Angeles)
 - Document status: Active
 
+## See Also
+
+- [2026-01-08_180853_eager_cycle_detection_research.md](2026-01-08_180853_eager_cycle_detection_research.md) - Research on implementing eager cycle detection using targeted DFS reachability
+
 ## Purpose
 
 This document captures the design process for `graph_core.hpp` and related files, the central classes representing the CRDDAGT (Create, Read, Destroy DAG of Tasks) runtime structure. It includes reviews, identifies design questions, and tracks decisions as they are made.
@@ -71,10 +75,13 @@ Note that there is no "Update" operation. A step that modifies data would have s
 
 **Question**: What does "blame" mean in the TrustLevel context?
 
-**Decision**: **Blame for both cycles and constraint violations**
-- When cycles are detected, lower-trust links are more likely to be identified as the problem
-- When constraint violations occur, lower-trust links are suspected first
-- `Low` = most likely to be blamed, `High` = least likely
+**Decision**: **Blame ordering depends on validation mode**
+
+- **Non-eager mode** (diagnostics): When cycles or constraint violations are detected via `get_diagnostics()`, lower-trust links are more likely to be identified as the problem. `Low` = most likely to be blamed, `High` = least likely.
+
+- **Eager mode** (immediate throw): When a cycle is detected immediately upon adding a link, the **action that triggers the cycle is the culprit**, regardless of its TrustLevel. The TrustLevel of all affected edges is still reported for informational purposes, but the triggering action bears responsibility.
+
+**Rationale for eager mode**: In typical usage, higher-trust dependencies (e.g., between algorithm clusters) are declared early, and lower-trust dependencies are added later. The last-to-add edge that creates a cycle is usually both the culprit and happens to be lower trust. Eager detection makes this explicit.
 
 ### Decision 4: Ownership Model
 
@@ -89,6 +96,18 @@ Note that there is no "Update" operation. A step that modifies data would have s
 - Each field has a fixed `Usage` (Create, Read, or Destroy) set at `add_field()` time
 - `link_fields()` connects fields that reference the **same data**
 - Execution order is automatically derived from the `Usage` values of linked fields
+
+### Decision 6: Append-Only Design
+
+**Decision**: `GraphCore` is **append-only** (additive-only) by design.
+
+Once added, steps, fields, and links cannot be removed or modified. This architectural constraint enables:
+- Eager cycle detection with simple DFS reachability
+- Feasible algorithm choices without complex incremental graph algorithms
+- Predictable performance without edge removal overhead
+- Simplified reasoning (invariants remain valid as graph grows)
+
+See [eager cycle detection research](2026-01-08_180853_eager_cycle_detection_research.md) for detailed rationale.
 
 ## Changes Applied
 
@@ -151,7 +170,12 @@ Created `graph_core.cpp` with:
 - `add_step()`, `add_field()` with validation
 - `link_steps()`, `link_fields()` with validation
 - Union-find `uf_find()`, `uf_unite()` helpers
-- `get_diagnostics()` placeholder (TODO: full validation)
+- `get_diagnostics()` full implementation with 4 phases:
+  - Phase 1: Build field equivalence classes via union-find
+  - Phase 2: Usage constraint validation (double create, double destroy, missing create, self-aliasing)
+  - Phase 3: Orphan detection (orphan steps, orphan fields)
+  - Phase 4: Cycle detection using Kahn's algorithm
+- Blame analysis helpers: `add_field_link_blame()`, `add_step_link_blame()`
 - `export_graph()` implementation with:
   - Field-to-data mapping via union-find
   - DataInfo population
@@ -217,6 +241,10 @@ This provides clarity in the API while maintaining compatibility with code that 
 | 2026-01-08 | Claude Opus 4.5 | Implemented GraphCore private fields with union-find for field equivalence |
 | 2026-01-08 | Claude Opus 4.5 | Implemented GraphCoreDiagnostics with severity/category enums and blame analysis |
 | 2026-01-08 | Claude Opus 4.5 | Created graph_core.cpp with full GraphCore implementation |
+| 2026-01-08 | Claude Opus 4.5 | Created 35 TDD unit tests for get_diagnostics() in graph_core_diagnostics_tests.cpp |
+| 2026-01-08 | Claude Opus 4.5 | Implemented full get_diagnostics() with cycle detection (Kahn's algorithm), usage constraints, and orphan detection |
+| 2026-01-08 | Claude Opus 4.5 | Added see-also link to eager cycle detection research; updated Decision 3 to clarify eager vs non-eager blame semantics |
+| 2026-01-08 | Claude Opus 4.5 | Added Decision 6: Append-Only Design architectural constraint |
 
 ---
 
