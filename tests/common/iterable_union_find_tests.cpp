@@ -1,0 +1,477 @@
+#include <gtest/gtest.h>
+#include <algorithm>
+#include <set>
+#include <numeric>
+#include "crddagt/common/iterable_union_find.hpp"
+
+using namespace crddagt;
+
+// =============================================================================
+// Basic Operations Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, MakeSet_SingletonHasSizeOne) {
+    IterableUnionFind<size_t> uf;
+    size_t x = uf.make_set();
+    EXPECT_EQ(uf.class_size(x), 1);
+}
+
+TEST(IterableUnionFindTests, MakeSet_SingletonIsSelfRoot) {
+    IterableUnionFind<size_t> uf;
+    size_t x = uf.make_set();
+    EXPECT_EQ(uf.find(x), x);
+}
+
+TEST(IterableUnionFindTests, MakeSet_SingletonCircularList) {
+    IterableUnionFind<size_t> uf;
+    size_t x = uf.make_set();
+    std::vector<size_t> members;
+    uf.get_class_members(x, members);
+    ASSERT_EQ(members.size(), 1);
+    EXPECT_EQ(members[0], x);
+}
+
+TEST(IterableUnionFindTests, MakeSet_SequentialIndices) {
+    IterableUnionFind<size_t> uf;
+    EXPECT_EQ(uf.make_set(), 0);
+    EXPECT_EQ(uf.make_set(), 1);
+    EXPECT_EQ(uf.make_set(), 2);
+    EXPECT_EQ(uf.make_set(), 3);
+    EXPECT_EQ(uf.element_count(), 4);
+}
+
+// =============================================================================
+// Unite Operations Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, Unite_TwoSingletons_MergesCorrectly) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+
+    EXPECT_TRUE(uf.unite(a, b));
+    EXPECT_EQ(uf.find(a), uf.find(b));
+    EXPECT_EQ(uf.class_size(a), 2);
+    EXPECT_EQ(uf.class_size(b), 2);
+}
+
+TEST(IterableUnionFindTests, Unite_SameClass_ReturnsFalse) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+
+    uf.unite(a, b);
+    EXPECT_FALSE(uf.unite(a, b));
+    EXPECT_FALSE(uf.unite(b, a));
+}
+
+TEST(IterableUnionFindTests, Unite_SameClass_SizeUnchanged) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+
+    uf.unite(a, b);
+    size_t size_before = uf.class_size(a);
+    uf.unite(a, b);
+    EXPECT_EQ(uf.class_size(a), size_before);
+}
+
+TEST(IterableUnionFindTests, Unite_ChainOfThree_AllSameRoot) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+
+    uf.unite(a, b);
+    uf.unite(b, c);
+
+    EXPECT_EQ(uf.find(a), uf.find(b));
+    EXPECT_EQ(uf.find(b), uf.find(c));
+    EXPECT_EQ(uf.class_size(a), 3);
+}
+
+TEST(IterableUnionFindTests, Unite_RankDecision_SmallerUnderLarger) {
+    IterableUnionFind<size_t> uf;
+    // Create two sets of different sizes to get different ranks
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+    size_t d = uf.make_set();
+
+    // Unite a-b (rank 1) and c-d (rank 1), then merge them
+    uf.unite(a, b);
+    uf.unite(c, d);
+
+    // Now both have rank 1, so we can unite a with c
+    // Add more elements to one side to create rank difference
+    size_t e = uf.make_set();
+    size_t f = uf.make_set();
+    uf.unite(e, f);
+    uf.unite(a, e);  // Now a's class has rank 2
+
+    // Unite with c's class (rank 1) - c should go under a's root
+    size_t root_a_before = uf.find(a);
+    uf.unite(a, c);
+    size_t root_after = uf.find(c);
+
+    // The root of the larger-rank tree should become the root
+    EXPECT_EQ(root_after, root_a_before);
+}
+
+// =============================================================================
+// Size Tracking Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, Size_TotalityInvariant_AfterMakeSet) {
+    IterableUnionFind<size_t> uf;
+    for (int i = 0; i < 10; ++i) {
+        uf.make_set();
+    }
+
+    // Calculate sum of sizes by checking each element's class
+    // Since we haven't united anything, each is its own class with size 1
+    size_t total = 0;
+    for (size_t i = 0; i < uf.element_count(); ++i) {
+        if (uf.class_root(i) == i) {
+            total += uf.class_size(i);
+        }
+    }
+    EXPECT_EQ(total, uf.element_count());
+}
+
+TEST(IterableUnionFindTests, Size_TotalityInvariant_AfterUnite) {
+    IterableUnionFind<size_t> uf;
+    for (int i = 0; i < 10; ++i) {
+        uf.make_set();
+    }
+
+    // Perform some unites
+    uf.unite(0, 1);
+    uf.unite(2, 3);
+    uf.unite(0, 2);
+    uf.unite(5, 6);
+    uf.unite(7, 8);
+    uf.unite(5, 7);
+
+    // Sum sizes at roots only
+    size_t total = 0;
+    for (size_t i = 0; i < uf.element_count(); ++i) {
+        if (uf.class_root(i) == i) {
+            total += uf.class_size(i);
+        }
+    }
+    EXPECT_EQ(total, uf.element_count());
+}
+
+TEST(IterableUnionFindTests, Size_NonRootReturnsCorrectSize) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+
+    uf.unite(a, b);
+    uf.unite(b, c);
+
+    // All should report size 3, regardless of which is root
+    EXPECT_EQ(uf.class_size(a), 3);
+    EXPECT_EQ(uf.class_size(b), 3);
+    EXPECT_EQ(uf.class_size(c), 3);
+}
+
+TEST(IterableUnionFindTests, Size_RootReturnsCorrectSize) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+
+    uf.unite(a, b);
+
+    size_t root = uf.find(a);
+    EXPECT_EQ(uf.class_size(root), 2);
+}
+
+// =============================================================================
+// Circular List Enumeration Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, GetMembers_Singleton_ReturnsSelf) {
+    IterableUnionFind<size_t> uf;
+    size_t x = uf.make_set();
+    std::vector<size_t> members;
+    uf.get_class_members(x, members);
+    ASSERT_EQ(members.size(), 1);
+    EXPECT_EQ(members[0], x);
+}
+
+TEST(IterableUnionFindTests, GetMembers_TwoElements_ReturnsBoth) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    uf.unite(a, b);
+
+    std::vector<size_t> members;
+    uf.get_class_members(a, members);
+
+    ASSERT_EQ(members.size(), 2);
+    std::set<size_t> member_set(members.begin(), members.end());
+    EXPECT_TRUE(member_set.count(a));
+    EXPECT_TRUE(member_set.count(b));
+}
+
+TEST(IterableUnionFindTests, GetMembers_FromAnyMember_SameResult) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+    uf.unite(a, b);
+    uf.unite(b, c);
+
+    std::vector<size_t> members_a, members_b, members_c;
+    uf.get_class_members(a, members_a);
+    uf.get_class_members(b, members_b);
+    uf.get_class_members(c, members_c);
+
+    // All should have the same elements (possibly in different order)
+    std::set<size_t> set_a(members_a.begin(), members_a.end());
+    std::set<size_t> set_b(members_b.begin(), members_b.end());
+    std::set<size_t> set_c(members_c.begin(), members_c.end());
+
+    EXPECT_EQ(set_a, set_b);
+    EXPECT_EQ(set_b, set_c);
+}
+
+TEST(IterableUnionFindTests, GetMembers_LargeClass_AllPresent) {
+    IterableUnionFind<size_t> uf;
+    const size_t N = 100;
+
+    for (size_t i = 0; i < N; ++i) {
+        uf.make_set();
+    }
+
+    // Unite all into one class
+    for (size_t i = 1; i < N; ++i) {
+        uf.unite(0, i);
+    }
+
+    std::vector<size_t> members;
+    uf.get_class_members(0, members);
+
+    ASSERT_EQ(members.size(), N);
+
+    std::set<size_t> member_set(members.begin(), members.end());
+    for (size_t i = 0; i < N; ++i) {
+        EXPECT_TRUE(member_set.count(i)) << "Missing element " << i;
+    }
+}
+
+TEST(IterableUnionFindTests, GetMembers_CountMatchesSize) {
+    IterableUnionFind<size_t> uf;
+    for (int i = 0; i < 10; ++i) {
+        uf.make_set();
+    }
+
+    uf.unite(0, 1);
+    uf.unite(2, 3);
+    uf.unite(0, 2);
+    uf.unite(5, 6);
+
+    // Check each element's class
+    for (size_t i = 0; i < uf.element_count(); ++i) {
+        std::vector<size_t> members;
+        uf.get_class_members(i, members);
+        EXPECT_EQ(members.size(), uf.class_size(i))
+            << "Mismatch at element " << i;
+    }
+}
+
+// =============================================================================
+// Path Compression Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, Find_CompressesPath) {
+    IterableUnionFind<size_t> uf;
+    // Create a chain: 0 <- 1 <- 2 <- 3
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+    size_t d = uf.make_set();
+
+    uf.unite(a, b);
+    uf.unite(b, c);
+    uf.unite(c, d);
+
+    size_t root = uf.find(d);
+
+    // After find(d), d should point directly to root
+    // We verify by checking that a second find is still correct
+    EXPECT_EQ(uf.find(d), root);
+    EXPECT_EQ(uf.find(c), root);
+    EXPECT_EQ(uf.find(b), root);
+    EXPECT_EQ(uf.find(a), root);
+}
+
+TEST(IterableUnionFindTests, Find_DoesNotAffectCircularList) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+
+    uf.unite(a, b);
+    uf.unite(b, c);
+
+    std::vector<size_t> members_before;
+    uf.get_class_members(a, members_before);
+
+    // Perform finds which compress paths
+    uf.find(a);
+    uf.find(b);
+    uf.find(c);
+
+    std::vector<size_t> members_after;
+    uf.get_class_members(a, members_after);
+
+    // Members should be the same
+    std::set<size_t> set_before(members_before.begin(), members_before.end());
+    std::set<size_t> set_after(members_after.begin(), members_after.end());
+    EXPECT_EQ(set_before, set_after);
+}
+
+TEST(IterableUnionFindTests, ClassRoot_DoesNotCompress) {
+    IterableUnionFind<size_t> uf;
+    // We can't directly verify internal state, but we can verify
+    // that class_root is const and returns the same as find
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+
+    uf.unite(a, b);
+    uf.unite(b, c);
+
+    // class_root should give same result as find
+    EXPECT_EQ(uf.class_root(a), uf.find(a));
+    EXPECT_EQ(uf.class_root(b), uf.find(b));
+    EXPECT_EQ(uf.class_root(c), uf.find(c));
+}
+
+// =============================================================================
+// Index Validation Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, Find_InvalidIndex_Throws) {
+    IterableUnionFind<size_t> uf;
+    EXPECT_THROW(uf.find(0), std::runtime_error);
+    EXPECT_THROW(uf.find(999), std::runtime_error);
+}
+
+TEST(IterableUnionFindTests, Unite_InvalidIndex_Throws) {
+    IterableUnionFind<size_t> uf;
+    uf.make_set();  // index 0 exists
+
+    EXPECT_THROW(uf.unite(0, 999), std::runtime_error);
+    EXPECT_THROW(uf.unite(999, 0), std::runtime_error);
+}
+
+TEST(IterableUnionFindTests, ClassSize_InvalidIndex_Throws) {
+    IterableUnionFind<size_t> uf;
+    EXPECT_THROW(uf.class_size(0), std::runtime_error);
+    EXPECT_THROW(uf.class_size(999), std::runtime_error);
+}
+
+TEST(IterableUnionFindTests, GetMembers_InvalidIndex_Throws) {
+    IterableUnionFind<size_t> uf;
+    std::vector<size_t> out;
+    EXPECT_THROW(uf.get_class_members(0, out), std::runtime_error);
+    EXPECT_THROW(uf.get_class_members(999, out), std::runtime_error);
+}
+
+TEST(IterableUnionFindTests, SameClass_InvalidIndex_Throws) {
+    IterableUnionFind<size_t> uf;
+    uf.make_set();  // index 0 exists
+
+    EXPECT_THROW(uf.same_class(0, 999), std::runtime_error);
+    EXPECT_THROW(uf.same_class(999, 0), std::runtime_error);
+}
+
+TEST(IterableUnionFindTests, ClassRoot_InvalidIndex_Throws) {
+    IterableUnionFind<size_t> uf;
+    EXPECT_THROW(uf.class_root(0), std::runtime_error);
+    EXPECT_THROW(uf.class_root(999), std::runtime_error);
+}
+
+TEST(IterableUnionFindTests, ErrorMessage_ContainsIndex) {
+    IterableUnionFind<size_t> uf;
+    try {
+        uf.find(42);
+        FAIL() << "Expected std::runtime_error";
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        EXPECT_NE(msg.find("42"), std::string::npos)
+            << "Error message should contain the invalid index: " << msg;
+    }
+}
+
+TEST(IterableUnionFindTests, ErrorMessage_ContainsRange) {
+    IterableUnionFind<size_t> uf;
+    uf.make_set();
+    uf.make_set();
+    uf.make_set();  // Valid range is [0, 3)
+
+    try {
+        uf.find(5);
+        FAIL() << "Expected std::runtime_error";
+    } catch (const std::runtime_error& e) {
+        std::string msg = e.what();
+        EXPECT_NE(msg.find("3"), std::string::npos)
+            << "Error message should contain the range upper bound: " << msg;
+    }
+}
+
+// =============================================================================
+// Edge Cases Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, Empty_ElementCountZero) {
+    IterableUnionFind<size_t> uf;
+    EXPECT_EQ(uf.element_count(), 0);
+}
+
+TEST(IterableUnionFindTests, Unite_WithSelf_ReturnsFalse) {
+    IterableUnionFind<size_t> uf;
+    size_t x = uf.make_set();
+    EXPECT_FALSE(uf.unite(x, x));
+    EXPECT_EQ(uf.class_size(x), 1);
+}
+
+// =============================================================================
+// same_class() Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, SameClass_SameElement_ReturnsTrue) {
+    IterableUnionFind<size_t> uf;
+    size_t x = uf.make_set();
+    EXPECT_TRUE(uf.same_class(x, x));
+}
+
+TEST(IterableUnionFindTests, SameClass_DifferentClasses_ReturnsFalse) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    EXPECT_FALSE(uf.same_class(a, b));
+}
+
+TEST(IterableUnionFindTests, SameClass_AfterUnite_ReturnsTrue) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    uf.unite(a, b);
+    EXPECT_TRUE(uf.same_class(a, b));
+}
+
+TEST(IterableUnionFindTests, SameClass_TransitiveAfterUnite_ReturnsTrue) {
+    IterableUnionFind<size_t> uf;
+    size_t a = uf.make_set();
+    size_t b = uf.make_set();
+    size_t c = uf.make_set();
+    uf.unite(a, b);
+    uf.unite(b, c);
+    EXPECT_TRUE(uf.same_class(a, c));
+}
