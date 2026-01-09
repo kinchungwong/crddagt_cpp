@@ -448,6 +448,37 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_MissingCreate_NonEager)
     EXPECT_TRUE(found_usage);
 }
 
+TEST(GraphCoreDiagnosticsTests, UsageConstraint_MissingCreate_Eager)
+{
+    // Data with only Read/Destroy but no Create
+    // In eager mode: does link_fields() throw, or does it succeed
+    // and defer to get_diagnostics()?
+    GraphCore graph(true); // eager validation
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_field(0, 0, typeid(int), Usage::Read);
+    graph.add_field(1, 1, typeid(int), Usage::Destroy);
+
+    // Observe: does this throw or succeed?
+    graph.link_fields(0, 1, TrustLevel::Middle);
+
+    // If we get here, link_fields() did not throw
+    // Check what get_diagnostics() reports
+    auto diag = graph.get_diagnostics();
+    EXPECT_TRUE(diag->has_errors()) << "Expected missing Create to be reported as error";
+
+    bool found_usage = false;
+    for (const auto& item : diag->errors())
+    {
+        if (item.category == DiagnosticCategory::UsageConstraint)
+        {
+            found_usage = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_usage) << "Expected UsageConstraint error for missing Create";
+}
+
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndRead_NonEager)
 {
     // Same step has both Create and Read for same data

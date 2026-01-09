@@ -9,6 +9,7 @@
 - [2026-01-08_094948_graph_core_design.md](2026-01-08_094948_graph_core_design.md) - Main GraphCore design document (includes TrustLevel blame semantics for eager vs non-eager modes)
 - [2026-01-08_185125_eager_cycle_detection_snippets.md](2026-01-08_185125_eager_cycle_detection_snippets.md) - Sample code snippets for this design
 - [2026-01-08_202059_iterable_union_find_design.md](2026-01-08_202059_iterable_union_find_design.md) - Standalone IterableUnionFind class design (Implementation Plan Phases 1-3)
+- [2026-01-09_153426_missing_create_seal_sensitivity.md](2026-01-09_153426_missing_create_seal_sensitivity.md) - Defect analysis: "missing Create" diagnostic severity depends on graph seal state
 
 ## Purpose
 
