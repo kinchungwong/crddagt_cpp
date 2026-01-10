@@ -110,9 +110,11 @@ public:
      * @param trust The trust level to assign to this link (for diagnostics).
      * @throw GraphCoreError with `InvalidFieldIndex` if either index is invalid,
      *        `TypeMismatch` if the fields have different type information,
-     *        `UsageConstraintViolation` if the link would violate usage rules
-     *        (e.g., two Creates for the same data), or `CycleDetected` if the
-     *        implied step ordering would create a cycle.
+     *        `MultipleCreate` if the link would result in two Creates for same data,
+     *        `MultipleDestroy` if the link would result in two Destroys for same data,
+     *        `UnsafeSelfAliasing` if the link would give a step incompatible usages
+     *        for the same data, or `CycleDetected` if the implied step ordering
+     *        would create a cycle.
      * @note Linking fields induces implicit step execution order based on their
      *       `Usage` values: Create < Read < Destroy.
      */
@@ -120,10 +122,20 @@ public:
 
     /**
      * @brief Get diagnostics information about the graph.
+     *
+     * @param treat_as_sealed If true, MissingCreate is reported as Error.
+     *        If false (default), MissingCreate is reported as Warning.
+     *        This parameter affects only the MissingCreate diagnostic;
+     *        all other diagnostics have fixed severity regardless of this flag.
+     *
      * @return Shared pointer to the diagnostics object containing any errors
      *         or warnings detected in the graph structure.
+     *
+     * @note Use `treat_as_sealed = true` when the graph is considered complete
+     *       and no more fields will be added. Use `treat_as_sealed = false`
+     *       (the default) when calling during incremental construction.
      */
-    std::shared_ptr<GraphCoreDiagnostics> get_diagnostics() const;
+    std::shared_ptr<GraphCoreDiagnostics> get_diagnostics(bool treat_as_sealed = false) const;
 
     /**
      * @brief Export the graph structure.

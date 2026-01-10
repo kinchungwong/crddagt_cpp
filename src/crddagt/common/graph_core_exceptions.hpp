@@ -21,7 +21,9 @@ enum class GraphCoreErrorCode
     DuplicateStepIndex,
     DuplicateFieldIndex,
     TypeMismatch,
-    UsageConstraintViolation,
+    MultipleCreate,          ///< More than one Create field for the same data.
+    MultipleDestroy,         ///< More than one Destroy field for the same data.
+    UnsafeSelfAliasing,      ///< Same step has incompatible usages for same data.
     CycleDetected,
     InvalidState,
     InvariantViolation

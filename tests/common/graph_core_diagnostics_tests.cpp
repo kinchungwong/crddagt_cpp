@@ -383,16 +383,16 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleCreate_NonEager)
     auto diag = graph.get_diagnostics();
     EXPECT_TRUE(diag->has_errors());
 
-    bool found_usage = false;
+    bool found_multiple_create = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate)
         {
-            found_usage = true;
+            found_multiple_create = true;
             break;
         }
     }
-    EXPECT_TRUE(found_usage);
+    EXPECT_TRUE(found_multiple_create);
 }
 
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleDestroy_NonEager)
@@ -411,72 +411,152 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_DoubleDestroy_NonEager)
     auto diag = graph.get_diagnostics();
     EXPECT_TRUE(diag->has_errors());
 
-    bool found_usage = false;
+    bool found_multiple_destroy = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleDestroy)
         {
-            found_usage = true;
+            found_multiple_destroy = true;
             break;
         }
     }
-    EXPECT_TRUE(found_usage);
+    EXPECT_TRUE(found_multiple_destroy);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_MissingCreate_NonEager)
+TEST(GraphCoreDiagnosticsTests, MissingCreate_Sealed_IsError)
 {
-    // Data with only Read/Destroy but no Create = error
-    GraphCore graph(false); // non-eager: violation detected in get_diagnostics()
+    // Data with only Read/Destroy but no Create = error when sealed
+    GraphCore graph(false);
     graph.add_step(0);
     graph.add_step(1);
     graph.add_field(0, 0, typeid(int), Usage::Read);
     graph.add_field(1, 1, typeid(int), Usage::Destroy);
     graph.link_fields(0, 1, TrustLevel::Middle);
 
-    auto diag = graph.get_diagnostics();
+    // When sealed (treat_as_sealed=true), MissingCreate is an error
+    auto diag = graph.get_diagnostics(true);
     EXPECT_TRUE(diag->has_errors());
 
-    bool found_usage = false;
+    bool found_missing_create = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MissingCreate)
         {
-            found_usage = true;
+            found_missing_create = true;
+            EXPECT_EQ(item.severity, DiagnosticSeverity::Error);
             break;
         }
     }
-    EXPECT_TRUE(found_usage);
+    EXPECT_TRUE(found_missing_create);
 }
 
-TEST(GraphCoreDiagnosticsTests, UsageConstraint_MissingCreate_Eager)
+TEST(GraphCoreDiagnosticsTests, MissingCreate_Unsealed_IsWarning)
 {
-    // Data with only Read/Destroy but no Create
-    // In eager mode: does link_fields() throw, or does it succeed
-    // and defer to get_diagnostics()?
+    // Data with only Read/Destroy but no Create = warning when unsealed (default)
+    GraphCore graph(false);
+    graph.add_step(0);
+    graph.add_step(1);
+    graph.add_field(0, 0, typeid(int), Usage::Read);
+    graph.add_field(1, 1, typeid(int), Usage::Destroy);
+    graph.link_fields(0, 1, TrustLevel::Middle);
+
+    // When unsealed (treat_as_sealed=false), MissingCreate is a warning
+    auto diag = graph.get_diagnostics(false);
+    EXPECT_FALSE(diag->has_errors()) << "MissingCreate should be warning when unsealed";
+    EXPECT_TRUE(diag->has_warnings());
+
+    bool found_missing_create = false;
+    for (const auto& item : diag->warnings())
+    {
+        if (item.category == DiagnosticCategory::MissingCreate)
+        {
+            found_missing_create = true;
+            EXPECT_EQ(item.severity, DiagnosticSeverity::Warning);
+            break;
+        }
+    }
+    EXPECT_TRUE(found_missing_create);
+}
+
+TEST(GraphCoreDiagnosticsTests, MissingCreate_Eager_NotThrownDuringLinkFields)
+{
+    // MissingCreate is NOT checked eagerly during link_fields()
+    // because the Create field might be added later
     GraphCore graph(true); // eager validation
     graph.add_step(0);
     graph.add_step(1);
     graph.add_field(0, 0, typeid(int), Usage::Read);
     graph.add_field(1, 1, typeid(int), Usage::Destroy);
 
-    // Observe: does this throw or succeed?
-    graph.link_fields(0, 1, TrustLevel::Middle);
+    // link_fields() should NOT throw for MissingCreate
+    EXPECT_NO_THROW(graph.link_fields(0, 1, TrustLevel::Middle));
 
-    // If we get here, link_fields() did not throw
-    // Check what get_diagnostics() reports
-    auto diag = graph.get_diagnostics();
-    EXPECT_TRUE(diag->has_errors()) << "Expected missing Create to be reported as error";
+    // When sealed, get_diagnostics(true) reports it as error
+    auto diag = graph.get_diagnostics(true);
+    EXPECT_TRUE(diag->has_errors()) << "Expected missing Create to be error when sealed";
 
-    bool found_usage = false;
+    bool found_missing_create = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MissingCreate)
         {
-            found_usage = true;
+            found_missing_create = true;
             break;
         }
     }
-    EXPECT_TRUE(found_usage) << "Expected UsageConstraint error for missing Create";
+    EXPECT_TRUE(found_missing_create) << "Expected MissingCreate error when sealed";
+}
+
+TEST(GraphCoreDiagnosticsTests, MissingCreate_SingletonRead_Sealed)
+{
+    // Singleton Read (not linked to anything) = MissingCreate error when sealed
+    // This is the bug fix: singleton Read was incorrectly getting OrphanField warning
+    GraphCore graph(false);
+    graph.add_step(0);
+    graph.add_field(0, 0, typeid(int), Usage::Read);
+
+    // When sealed, singleton Read triggers MissingCreate error
+    auto diag = graph.get_diagnostics(true);
+    EXPECT_TRUE(diag->has_errors()) << "Singleton Read should be an error when sealed";
+
+    bool found_missing_create = false;
+    for (const auto& item : diag->errors())
+    {
+        if (item.category == DiagnosticCategory::MissingCreate)
+        {
+            found_missing_create = true;
+            EXPECT_EQ(item.involved_fields.size(), 1u);
+            EXPECT_EQ(item.involved_fields[0], 0u);
+            break;
+        }
+    }
+    EXPECT_TRUE(found_missing_create) << "Singleton Read should trigger MissingCreate error when sealed";
+}
+
+TEST(GraphCoreDiagnosticsTests, MissingCreate_SingletonDestroy_Sealed)
+{
+    // Singleton Destroy (not linked to anything) = MissingCreate error when sealed
+    // This is the bug fix: singleton Destroy was incorrectly getting OrphanField warning
+    GraphCore graph(false);
+    graph.add_step(0);
+    graph.add_field(0, 0, typeid(int), Usage::Destroy);
+
+    // When sealed, singleton Destroy triggers MissingCreate error
+    auto diag = graph.get_diagnostics(true);
+    EXPECT_TRUE(diag->has_errors()) << "Singleton Destroy should be an error when sealed";
+
+    bool found_missing_create = false;
+    for (const auto& item : diag->errors())
+    {
+        if (item.category == DiagnosticCategory::MissingCreate)
+        {
+            found_missing_create = true;
+            EXPECT_EQ(item.involved_fields.size(), 1u);
+            EXPECT_EQ(item.involved_fields[0], 0u);
+            break;
+        }
+    }
+    EXPECT_TRUE(found_missing_create) << "Singleton Destroy should trigger MissingCreate error when sealed";
 }
 
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndRead_NonEager)
@@ -492,16 +572,16 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndRead_NonEager)
     auto diag = graph.get_diagnostics();
     EXPECT_TRUE(diag->has_errors());
 
-    bool found_usage = false;
+    bool found_self_aliasing = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
-            found_usage = true;
+            found_self_aliasing = true;
             break;
         }
     }
-    EXPECT_TRUE(found_usage);
+    EXPECT_TRUE(found_self_aliasing);
 }
 
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndDestroy_NonEager)
@@ -516,16 +596,16 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasCreateAndDestroy_NonEag
     auto diag = graph.get_diagnostics();
     EXPECT_TRUE(diag->has_errors());
 
-    bool found_usage = false;
+    bool found_self_aliasing = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
-            found_usage = true;
+            found_self_aliasing = true;
             break;
         }
     }
-    EXPECT_TRUE(found_usage);
+    EXPECT_TRUE(found_self_aliasing);
 }
 
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasReadAndDestroy_NonEager)
@@ -543,16 +623,16 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasReadAndDestroy_NonEager
     auto diag = graph.get_diagnostics();
     EXPECT_TRUE(diag->has_errors());
 
-    bool found_usage = false;
+    bool found_self_aliasing = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
-            found_usage = true;
+            found_self_aliasing = true;
             break;
         }
     }
-    EXPECT_TRUE(found_usage);
+    EXPECT_TRUE(found_self_aliasing);
 }
 
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_SelfAliasDoubleReadAllowed)
@@ -583,10 +663,13 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_ValidCreateOnly)
 
     auto diag = graph.get_diagnostics();
 
+    // No errors for MultipleCreate, MultipleDestroy, or UnsafeSelfAliasing
     bool found_usage_error = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate ||
+            item.category == DiagnosticCategory::MultipleDestroy ||
+            item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
             found_usage_error = true;
             break;
@@ -610,10 +693,13 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_ValidCreateAndReads)
 
     auto diag = graph.get_diagnostics();
 
+    // No errors for MultipleCreate, MultipleDestroy, or UnsafeSelfAliasing
     bool found_usage_error = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate ||
+            item.category == DiagnosticCategory::MultipleDestroy ||
+            item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
             found_usage_error = true;
             break;
@@ -637,10 +723,13 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_ValidCreateReadsDestroy)
 
     auto diag = graph.get_diagnostics();
 
+    // No errors for MultipleCreate, MultipleDestroy, or UnsafeSelfAliasing
     bool found_usage_error = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate ||
+            item.category == DiagnosticCategory::MultipleDestroy ||
+            item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
             found_usage_error = true;
             break;
@@ -661,10 +750,13 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_ValidCreateAndDestroy)
 
     auto diag = graph.get_diagnostics();
 
+    // No errors for MultipleCreate, MultipleDestroy, or UnsafeSelfAliasing
     bool found_usage_error = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate ||
+            item.category == DiagnosticCategory::MultipleDestroy ||
+            item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
             found_usage_error = true;
             break;
@@ -691,16 +783,16 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_TransitiveDoubleCreate_NonEager)
     auto diag = graph.get_diagnostics();
     EXPECT_TRUE(diag->has_errors());
 
-    bool found_usage = false;
+    bool found_multiple_create = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate)
         {
-            found_usage = true;
+            found_multiple_create = true;
             break;
         }
     }
-    EXPECT_TRUE(found_usage);
+    EXPECT_TRUE(found_multiple_create);
 }
 
 TEST(GraphCoreDiagnosticsTests, UsageConstraint_BlameOrdersByTrustLevel_NonEager)
@@ -721,7 +813,7 @@ TEST(GraphCoreDiagnosticsTests, UsageConstraint_BlameOrdersByTrustLevel_NonEager
 
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate)
         {
             // Low trust link (index 1) should be blamed first
             ASSERT_GE(item.blamed_field_links.size(), 1u);
@@ -829,12 +921,12 @@ TEST(GraphCoreDiagnosticsTests, OrphanStep_HasBoth)
 }
 
 // ============================================================================
-// Orphan Field Detection Tests
+// UnusedData Detection Tests (formerly OrphanField)
 // ============================================================================
 
-TEST(GraphCoreDiagnosticsTests, OrphanField_SingletonEquivalenceClass)
+TEST(GraphCoreDiagnosticsTests, UnusedData_SingletonCreate)
 {
-    // Field not linked to any other = orphan warning
+    // Singleton Create = UnusedData warning (data created but never consumed)
     GraphCore graph(false);
     graph.add_step(0);
     graph.add_field(0, 0, typeid(int), Usage::Create);
@@ -842,23 +934,23 @@ TEST(GraphCoreDiagnosticsTests, OrphanField_SingletonEquivalenceClass)
     auto diag = graph.get_diagnostics();
     EXPECT_TRUE(diag->has_warnings());
 
-    bool found_orphan = false;
+    bool found_unused = false;
     for (const auto& item : diag->warnings())
     {
-        if (item.category == DiagnosticCategory::OrphanField)
+        if (item.category == DiagnosticCategory::UnusedData)
         {
-            found_orphan = true;
+            found_unused = true;
             EXPECT_EQ(item.involved_fields.size(), 1u);
             EXPECT_EQ(item.involved_fields[0], 0u);
             break;
         }
     }
-    EXPECT_TRUE(found_orphan);
+    EXPECT_TRUE(found_unused);
 }
 
-TEST(GraphCoreDiagnosticsTests, OrphanField_LinkedToOthers)
+TEST(GraphCoreDiagnosticsTests, UnusedData_LinkedCreateAndRead)
 {
-    // Field linked to other fields = NOT orphan
+    // Create linked to Read = NOT unused (has consumers)
     GraphCore graph(false);
     graph.add_step(0);
     graph.add_step(1);
@@ -868,21 +960,21 @@ TEST(GraphCoreDiagnosticsTests, OrphanField_LinkedToOthers)
 
     auto diag = graph.get_diagnostics();
 
-    bool found_orphan_field = false;
+    bool found_unused = false;
     for (const auto& item : diag->warnings())
     {
-        if (item.category == DiagnosticCategory::OrphanField)
+        if (item.category == DiagnosticCategory::UnusedData)
         {
-            found_orphan_field = true;
+            found_unused = true;
             break;
         }
     }
-    EXPECT_FALSE(found_orphan_field);
+    EXPECT_FALSE(found_unused);
 }
 
-TEST(GraphCoreDiagnosticsTests, OrphanField_AllFieldsLinked)
+TEST(GraphCoreDiagnosticsTests, UnusedData_FullLifecycle)
 {
-    // All fields in one equivalence class = no orphan warnings
+    // Create + Read + Destroy = complete lifecycle, no UnusedData warning
     GraphCore graph(false);
     graph.add_step(0);
     graph.add_step(1);
@@ -895,16 +987,16 @@ TEST(GraphCoreDiagnosticsTests, OrphanField_AllFieldsLinked)
 
     auto diag = graph.get_diagnostics();
 
-    bool found_orphan_field = false;
+    bool found_unused = false;
     for (const auto& item : diag->warnings())
     {
-        if (item.category == DiagnosticCategory::OrphanField)
+        if (item.category == DiagnosticCategory::UnusedData)
         {
-            found_orphan_field = true;
+            found_unused = true;
             break;
         }
     }
-    EXPECT_FALSE(found_orphan_field);
+    EXPECT_FALSE(found_unused);
 }
 
 // ============================================================================
@@ -1038,14 +1130,14 @@ TEST(GraphCoreDiagnosticsTests, EdgeCase_SingleStepSingleField)
 
     auto diag = graph.get_diagnostics();
 
-    // Single field in singleton equivalence class = orphan field warning
+    // Single Create field in singleton equivalence class = UnusedData warning
     EXPECT_TRUE(diag->is_valid());
     EXPECT_TRUE(diag->has_warnings());
 
     bool found = false;
     for (const auto& item : diag->warnings())
     {
-        if (item.category == DiagnosticCategory::OrphanField)
+        if (item.category == DiagnosticCategory::UnusedData)
         {
             found = true;
             break;
@@ -1073,11 +1165,13 @@ TEST(GraphCoreDiagnosticsTests, EdgeCase_MultipleIndependentDataFlows)
 
     auto diag = graph.get_diagnostics();
 
-    // Both flows are valid, no errors
+    // Both flows are valid, no errors for MultipleCreate, MultipleDestroy, or UnsafeSelfAliasing
     bool found_usage_error = false;
     for (const auto& item : diag->errors())
     {
-        if (item.category == DiagnosticCategory::UsageConstraint)
+        if (item.category == DiagnosticCategory::MultipleCreate ||
+            item.category == DiagnosticCategory::MultipleDestroy ||
+            item.category == DiagnosticCategory::UnsafeSelfAliasing)
         {
             found_usage_error = true;
             break;

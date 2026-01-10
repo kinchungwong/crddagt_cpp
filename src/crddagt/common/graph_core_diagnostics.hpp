@@ -27,10 +27,13 @@ enum class DiagnosticSeverity
 enum class DiagnosticCategory
 {
     Cycle,                  ///< A cycle was detected in the step ordering.
-    UsageConstraint,        ///< Usage rules were violated (e.g., two Creates).
+    MultipleCreate,         ///< More than one Create field for the same data.
+    MultipleDestroy,        ///< More than one Destroy field for the same data.
+    UnsafeSelfAliasing,     ///< Same step has incompatible usages for same data.
+    MissingCreate,          ///< Read/Destroy field without a corresponding Create.
     TypeMismatch,           ///< Linked fields have incompatible types.
     OrphanStep,             ///< A step has no fields or links.
-    OrphanField,            ///< A field is not linked to any data flow.
+    UnusedData,             ///< Create field with no Read or Destroy consumers.
     InternalError           ///< An internal consistency error.
 };
 
@@ -76,9 +79,17 @@ struct DiagnosticItem
  *
  * @par Error vs Warning
  * - **Errors** are blocking issues that prevent the graph from being exported.
- *   Examples: cycles, usage constraint violations.
+ *   Examples: Cycle, MultipleCreate, MultipleDestroy, UnsafeSelfAliasing,
+ *   TypeMismatch. Also MissingCreate when the graph is considered sealed.
  * - **Warnings** are non-blocking issues that may indicate problems but do not
- *   prevent export. Examples: orphan steps, orphan fields.
+ *   prevent export. Examples: OrphanStep, UnusedData.
+ *   Also MissingCreate when the graph is not considered sealed.
+ *
+ * @par Seal-sensitivity
+ * The `MissingCreate` diagnostic is the only seal-sensitive diagnostic.
+ * - When `get_diagnostics(false)` is called (default), MissingCreate is a Warning.
+ * - When `get_diagnostics(true)` is called (sealed), MissingCreate is an Error.
+ * All other diagnostics have fixed severity regardless of the seal parameter.
  *
  * @par Blame analysis
  * When issues are detected, the diagnostic system attempts to identify which

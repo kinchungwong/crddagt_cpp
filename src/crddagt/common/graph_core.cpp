@@ -225,7 +225,7 @@ void GraphCore::link_fields(size_t field_one_idx, size_t field_two_idx, TrustLev
         if (creates_one + creates_two > 1)
         {
             throw GraphCoreError(
-                GraphCoreErrorCode::UsageConstraintViolation,
+                GraphCoreErrorCode::MultipleCreate,
                 "Linking fields would result in multiple Create fields for same data");
         }
 
@@ -233,7 +233,7 @@ void GraphCore::link_fields(size_t field_one_idx, size_t field_two_idx, TrustLev
         if (destroys_one + destroys_two > 1)
         {
             throw GraphCoreError(
-                GraphCoreErrorCode::UsageConstraintViolation,
+                GraphCoreErrorCode::MultipleDestroy,
                 "Linking fields would result in multiple Destroy fields for same data");
         }
 
@@ -267,7 +267,7 @@ void GraphCore::link_fields(size_t field_one_idx, size_t field_two_idx, TrustLev
                 if (!all_reads)
                 {
                     throw GraphCoreError(
-                        GraphCoreErrorCode::UsageConstraintViolation,
+                        GraphCoreErrorCode::UnsafeSelfAliasing,
                         "Self-aliasing: step " + std::to_string(sidx) +
                             " would have incompatible field usages for same data");
                 }
@@ -396,7 +396,7 @@ bool GraphCore::is_reachable_from(StepIdx from, StepIdx target) const
 // Diagnostics and export
 // ============================================================================
 
-std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
+std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_sealed) const
 {
     auto diagnostics = std::make_shared<GraphCoreDiagnostics>();
 
@@ -447,7 +447,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
         {
             DiagnosticItem item;
             item.severity = DiagnosticSeverity::Error;
-            item.category = DiagnosticCategory::UsageConstraint;
+            item.category = DiagnosticCategory::MultipleCreate;
             item.message = "Multiple Create fields for same data object";
             item.involved_fields = create_fields;
             // Collect involved steps
@@ -465,7 +465,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
         {
             DiagnosticItem item;
             item.severity = DiagnosticSeverity::Error;
-            item.category = DiagnosticCategory::UsageConstraint;
+            item.category = DiagnosticCategory::MultipleDestroy;
             item.message = "Multiple Destroy fields for same data object";
             item.involved_fields = destroy_fields;
             for (FieldIdx f : destroy_fields)
@@ -476,12 +476,14 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
             diagnostics->m_errors.push_back(std::move(item));
         }
 
-        // Check: Missing Create (only if there are other usages - linked fields)
-        if (create_fields.empty() && fields.size() > 1)
+        // Check: Missing Create (any Read or Destroy without a Create)
+        // Severity depends on treat_as_sealed: Error when sealed, Warning when open
+        if (create_fields.empty() && (!read_fields.empty() || !destroy_fields.empty()))
         {
             DiagnosticItem item;
-            item.severity = DiagnosticSeverity::Error;
-            item.category = DiagnosticCategory::UsageConstraint;
+            item.severity = treat_as_sealed ? DiagnosticSeverity::Error
+                                            : DiagnosticSeverity::Warning;
+            item.category = DiagnosticCategory::MissingCreate;
             item.message = "Data object has no Create field";
             for (const auto& [fidx, sidx, usage] : fields)
             {
@@ -495,7 +497,14 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
                 all_fields.push_back(fidx);
             }
             add_field_link_blame(item, all_fields);
-            diagnostics->m_errors.push_back(std::move(item));
+            if (treat_as_sealed)
+            {
+                diagnostics->m_errors.push_back(std::move(item));
+            }
+            else
+            {
+                diagnostics->m_warnings.push_back(std::move(item));
+            }
         }
 
         // Check: Self-aliasing (same step has incompatible usages for same data)
@@ -521,7 +530,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
                     // Mixed usages = self-aliasing error
                     DiagnosticItem item;
                     item.severity = DiagnosticSeverity::Error;
-                    item.category = DiagnosticCategory::UsageConstraint;
+                    item.category = DiagnosticCategory::UnsafeSelfAliasing;
                     item.message = "Self-aliasing: step " + std::to_string(sidx) +
                                    " has incompatible field usages for same data object";
                     item.involved_steps.push_back(sidx);
@@ -564,19 +573,28 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics() const
         }
     }
 
-    // Orphan fields: fields in singleton equivalence class (not linked to any other)
+    // Singleton equivalence classes: handle based on usage type
+    // - Singleton Create → UnusedData warning (data created but never consumed)
+    // - Singleton Read/Destroy → MissingCreate (handled in Phase 2 condition fix)
     for (const auto& [root, fields] : equiv_classes)
     {
         if (fields.size() == 1)
         {
             const auto& [fidx, sidx, usage] = fields[0];
-            DiagnosticItem item;
-            item.severity = DiagnosticSeverity::Warning;
-            item.category = DiagnosticCategory::OrphanField;
-            item.message = "Field " + std::to_string(fidx) + " is not linked to any other field";
-            item.involved_fields.push_back(fidx);
-            item.involved_steps.push_back(sidx);
-            diagnostics->m_warnings.push_back(std::move(item));
+            if (usage == Usage::Create)
+            {
+                // Singleton Create = data created but never consumed
+                DiagnosticItem item;
+                item.severity = DiagnosticSeverity::Warning;
+                item.category = DiagnosticCategory::UnusedData;
+                item.message = "Create field " + std::to_string(fidx) +
+                               " has no consumers (no Read or Destroy)";
+                item.involved_fields.push_back(fidx);
+                item.involved_steps.push_back(sidx);
+                diagnostics->m_warnings.push_back(std::move(item));
+            }
+            // Singleton Read/Destroy are handled by MissingCreate detection
+            // (after Phase 2 condition fix)
         }
     }
 
@@ -781,8 +799,8 @@ void GraphCore::add_step_link_blame(DiagnosticItem& item,
 
 std::shared_ptr<ExportedGraph> GraphCore::export_graph() const
 {
-    // Check diagnostics first
-    auto diagnostics = get_diagnostics();
+    // Check diagnostics with treat_as_sealed=true since export implies completion
+    auto diagnostics = get_diagnostics(true);
     if (!diagnostics->is_valid())
     {
         throw GraphCoreError(
