@@ -2,7 +2,7 @@
 
 - Author: Claude Opus 4.5 (Anthropic)
 - Date: 2026-01-09 (America/Los_Angeles)
-- Document status: Active
+- Document status: Frozen (defect resolved)
 - Document type: Defect Analysis
 
 ## See Also
@@ -219,7 +219,8 @@ This analysis identified only "missing Create" as seal-sensitive. Are there othe
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-01-09 | Claude Opus 4.5 | Initial defect analysis document |
+| 2026-01-10 | Claude Opus 4.5 | **Defect resolved**: `get_diagnostics(bool treat_as_sealed = false)` implemented. MissingCreate is Warning when unsealed, Error when sealed. 251 tests passing. |
 
 ---
 
-*This document is Active and open for editing by both AI agents and humans.*
+*This document is Frozen. The defect has been resolved. See [2026-01-10_065043_diagnostic_revamp_mikado_plan.md](2026-01-10_065043_diagnostic_revamp_mikado_plan.md) for implementation details.*

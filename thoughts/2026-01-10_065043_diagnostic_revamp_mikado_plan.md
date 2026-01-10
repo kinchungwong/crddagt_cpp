@@ -2,7 +2,7 @@
 
 - Author: Claude Opus 4.5 (Anthropic)
 - Date: 2026-01-10 (America/Los_Angeles)
-- Document status: Active
+- Document status: Frozen (implementation complete)
 - Document type: Mikado Plan
 
 ## See Also
@@ -103,41 +103,41 @@ The dangers document covers:
 ## Mikado Goal Tree
 
 ```
-[GOAL] Diagnostic System Revamp Complete
-├── [M1] DiagnosticCategory enum updated
-│   ├── [1.1] Remove OrphanField
-│   ├── [1.2] Add MissingCreate
-│   ├── [1.3] Add UnusedData
-│   ├── [1.4] Replace UsageConstraint with MultipleCreate
-│   ├── [1.5] Replace UsageConstraint with MultipleDestroy
-│   └── [1.6] Replace UsageConstraint with UnsafeSelfAliasing
-├── [M2] get_diagnostics() updated
-│   ├── [2.1] Add treat_as_sealed parameter
-│   ├── [2.2] Fix MissingCreate condition (remove fields.size() > 1)
-│   ├── [2.3] Implement UnusedData detection
-│   ├── [2.4] Update severity logic for MissingCreate
-│   └── [2.5] Remove OrphanField detection loop
-├── [M3] Eager validation updated
-│   ├── [3.1] Update link_fields() to throw MultipleCreate
-│   ├── [3.2] Update link_fields() to throw MultipleDestroy
-│   └── [3.3] Update link_fields() to throw UnsafeSelfAliasing
-├── [M4] ExportedGraph enhanced for forced export
+[GOAL] Diagnostic System Revamp Complete ✓
+├── [M1] DiagnosticCategory enum updated ✓
+│   ├── [1.1] Remove OrphanField ✓
+│   ├── [1.2] Add MissingCreate ✓
+│   ├── [1.3] Add UnusedData ✓
+│   ├── [1.4] Replace UsageConstraint with MultipleCreate ✓
+│   ├── [1.5] Replace UsageConstraint with MultipleDestroy ✓
+│   └── [1.6] Replace UsageConstraint with UnsafeSelfAliasing ✓
+├── [M2] get_diagnostics() updated ✓
+│   ├── [2.1] Add treat_as_sealed parameter ✓
+│   ├── [2.2] Fix MissingCreate condition (remove fields.size() > 1) ✓
+│   ├── [2.3] Implement UnusedData detection ✓
+│   ├── [2.4] Update severity logic for MissingCreate ✓
+│   └── [2.5] Remove OrphanField detection loop ✓
+├── [M3] Eager validation updated ✓
+│   ├── [3.1] Update link_fields() to throw MultipleCreate ✓
+│   ├── [3.2] Update link_fields() to throw MultipleDestroy ✓
+│   └── [3.3] Update link_fields() to throw UnsafeSelfAliasing ✓
+├── [M4] ExportedGraph enhanced for forced export (DEFERRED)
 │   ├── [4.1] Add DiagnosticCategory field to link records
 │   ├── [4.2] Add DiagnosticCategory field to data definition records
 │   ├── [4.3] Implement export_graph(bool force) or similar
-│   └── [4.4] Document dangers of invalid graph instantiation
-├── [M5] Tests updated
-│   ├── [5.1] Singleton Read → MissingCreate
-│   ├── [5.2] Singleton Destroy → MissingCreate
-│   ├── [5.3] Singleton Create → UnusedData warning
-│   ├── [5.4] MissingCreate severity changes with seal state
-│   ├── [5.5] Update existing OrphanField tests
-│   ├── [5.6] Update existing UsageConstraint tests
-│   └── [5.7] Add forced export tests
-└── [M6] Documentation updated
-    ├── [6.1] Update graph_core_diagnostics.hpp comments
-    ├── [6.2] Update graph_core.hpp Doxygen
-    └── [6.3] Mark superseded sections in thought docs
+│   └── [4.4] Document dangers of invalid graph instantiation ✓
+├── [M5] Tests updated ✓
+│   ├── [5.1] Singleton Read → MissingCreate ✓
+│   ├── [5.2] Singleton Destroy → MissingCreate ✓
+│   ├── [5.3] Singleton Create → UnusedData warning ✓
+│   ├── [5.4] MissingCreate severity changes with seal state ✓
+│   ├── [5.5] Update existing OrphanField tests ✓
+│   ├── [5.6] Update existing UsageConstraint tests ✓
+│   └── [5.7] Add forced export tests (DEFERRED with M4)
+└── [M6] Documentation updated ✓
+    ├── [6.1] Update graph_core_diagnostics.hpp comments ✓
+    ├── [6.2] Update graph_core.hpp Doxygen ✓
+    └── [6.3] Mark superseded sections in thought docs ✓
 ```
 
 ---
@@ -294,7 +294,8 @@ if (!create_fields.empty() && read_fields.empty() && destroy_fields.empty())
 | 2026-01-10 | User | Added Assumptions subsection noting checked access layer mitigation |
 | 2026-01-10 | Claude Opus 4.5 | Revised Dangers 3-5 with implementation-specific consequence tables |
 | 2026-01-10 | Claude Opus 4.5 | Extracted dangers section to dedicated document |
+| 2026-01-10 | Claude Opus 4.5 | **Implementation complete**: Phases 1-6, 8-9 done. M4 (forced export) deferred. 251 tests passing. |
 
 ---
 
-*This document is Active and open for editing by both AI agents and humans.*
+*This document is Frozen. Implementation is complete except for the optional M4 (forced export) milestone.*
