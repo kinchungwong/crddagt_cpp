@@ -31,6 +31,9 @@ namespace crddagt {
 template <typename Idx = size_t>
 class IterableUnionFind {
 public:
+    static_assert(std::is_unsigned_v<Idx>,
+                  "IterableUnionFind: Idx must be an unsigned type");
+
     /**
      * @brief Default constructor creates an empty union-find structure.
      */
