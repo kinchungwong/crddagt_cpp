@@ -200,7 +200,7 @@ private:
 
     /// Union-find structure for field equivalence classes.
     /// Provides O(α(n)) find/unite and O(class_size) iteration.
-    mutable IterableUnionFind<FieldIdx> m_field_uf;
+    IterableUnionFind<FieldIdx> m_field_uf;
 
     /// Field link edges: (field_one_idx, field_two_idx).
     std::vector<std::pair<FieldIdx, FieldIdx>> m_field_links;
@@ -232,7 +232,8 @@ private:
     // -------------------------------------------------------------------------
 
     /// Add blamed field links to diagnostic item, ordered by trust level.
-    void add_field_link_blame(DiagnosticItem& item,
+    void add_field_link_blame(IterableUnionFind<FieldIdx>& field_uf,
+                              DiagnosticItem& item,
                               const std::vector<FieldIdx>& involved_fields) const;
 
     /// Add blamed step links to diagnostic item, ordered by trust level.

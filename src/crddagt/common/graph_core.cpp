@@ -404,12 +404,15 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
     // Phase 1: Build equivalence classes and collect field info per data object
     // =========================================================================
 
+    // Make a mutable so we can optimize it for repeated finds.
+    IterableUnionFind<FieldIdx> field_uf{m_field_uf};
+
     // Map from root field index to list of (field_idx, step_idx, usage)
     std::unordered_map<FieldIdx, std::vector<std::tuple<FieldIdx, StepIdx, Usage>>> equiv_classes;
 
     for (FieldIdx fidx = 0; fidx < m_field_count; ++fidx)
     {
-        FieldIdx root = m_field_uf.find(fidx);
+        FieldIdx root = field_uf.find(fidx);
         equiv_classes[root].emplace_back(fidx, m_field_owner_step[fidx], m_field_usages[fidx]);
     }
 
@@ -456,7 +459,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
                 item.involved_steps.push_back(m_field_owner_step[f]);
             }
             // Blame analysis: find field links involved, order by trust
-            add_field_link_blame(item, create_fields);
+            add_field_link_blame(field_uf, item, create_fields);
             diagnostics->m_errors.push_back(std::move(item));
         }
 
@@ -472,7 +475,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
             {
                 item.involved_steps.push_back(m_field_owner_step[f]);
             }
-            add_field_link_blame(item, destroy_fields);
+            add_field_link_blame(field_uf, item, destroy_fields);
             diagnostics->m_errors.push_back(std::move(item));
         }
 
@@ -496,7 +499,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
             {
                 all_fields.push_back(fidx);
             }
-            add_field_link_blame(item, all_fields);
+            add_field_link_blame(field_uf, item, all_fields);
             if (treat_as_sealed)
             {
                 diagnostics->m_errors.push_back(std::move(item));
@@ -538,7 +541,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
                     {
                         item.involved_fields.push_back(fidx);
                     }
-                    add_field_link_blame(item, item.involved_fields);
+                    add_field_link_blame(field_uf, item, item.involved_fields);
                     diagnostics->m_errors.push_back(std::move(item));
                 }
             }
@@ -730,8 +733,9 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
     return diagnostics;
 }
 
-void GraphCore::add_field_link_blame(DiagnosticItem& item,
-                                      const std::vector<FieldIdx>& involved_fields) const
+void GraphCore::add_field_link_blame(IterableUnionFind<FieldIdx>& field_uf,
+                                     DiagnosticItem& item,
+                                     const std::vector<FieldIdx>& involved_fields) const
 {
     // Find field links that connect any of the involved fields
     std::unordered_set<FieldIdx> field_set(involved_fields.begin(), involved_fields.end());
@@ -743,8 +747,8 @@ void GraphCore::add_field_link_blame(DiagnosticItem& item,
         const auto& [f1, f2] = m_field_links[i];
         // Check if this link connects two fields in the involved set
         // or connects a field in the set to another in the same equivalence class
-        FieldIdx root1 = m_field_uf.find(f1);
-        FieldIdx root2 = m_field_uf.find(f2);
+        FieldIdx root1 = field_uf.find(f1);
+        FieldIdx root2 = field_uf.find(f2);
         bool f1_involved = field_set.count(f1) > 0;
         bool f2_involved = field_set.count(f2) > 0;
 
@@ -768,7 +772,7 @@ void GraphCore::add_field_link_blame(DiagnosticItem& item,
 }
 
 void GraphCore::add_step_link_blame(DiagnosticItem& item,
-                                     const std::vector<StepIdx>& involved_steps) const
+                                    const std::vector<StepIdx>& involved_steps) const
 {
     // Find explicit step links that connect any of the involved steps
     std::unordered_set<StepIdx> step_set(involved_steps.begin(), involved_steps.end());
@@ -810,6 +814,9 @@ std::shared_ptr<ExportedGraph> GraphCore::export_graph() const
 
     auto exported = std::make_shared<ExportedGraph>();
 
+    // Make a mutable so we can optimize it for repeated finds.
+    IterableUnionFind<FieldIdx> field_uf{m_field_uf};
+
     // Build field-to-data mapping using union-find
     // Each equivalence class root becomes a data object index
     std::unordered_map<FieldIdx, DataIdx> root_to_data;
@@ -817,7 +824,7 @@ std::shared_ptr<ExportedGraph> GraphCore::export_graph() const
 
     for (FieldIdx fidx = 0; fidx < m_field_count; ++fidx)
     {
-        FieldIdx root = m_field_uf.find(fidx);
+        FieldIdx root = field_uf.find(fidx);
         auto it = root_to_data.find(root);
         if (it == root_to_data.end())
         {
@@ -833,7 +840,7 @@ std::shared_ptr<ExportedGraph> GraphCore::export_graph() const
 
     for (FieldIdx fidx = 0; fidx < m_field_count; ++fidx)
     {
-        FieldIdx root = m_field_uf.find(fidx);
+        FieldIdx root = field_uf.find(fidx);
         DataIdx didx = root_to_data[root];
         StepIdx sidx = m_field_owner_step[fidx];
         Usage usage = m_field_usages[fidx];
