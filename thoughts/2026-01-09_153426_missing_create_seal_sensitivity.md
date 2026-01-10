@@ -82,9 +82,9 @@ These diagnostics have the same severity regardless of graph state:
 | Diagnostic | Category | Severity | Reason |
 |------------|----------|----------|--------|
 | Cycle detected | Cycle | Error | A cycle is always an error; adding more edges cannot remove a cycle |
-| Multiple Creates | UsageConstraint | Error | Already have too many; adding more makes it worse |
-| Multiple Destroys | UsageConstraint | Error | Already have too many; adding more makes it worse |
-| Self-aliasing | UsageConstraint | Error | Incompatible usages on same step for same data |
+| Multiple Creates | MultipleCreate | Error | Already have too many; adding more makes it worse |
+| Multiple Destroys | MultipleDestroy | Error | Already have too many; adding more makes it worse |
+| Unsafe self-aliasing | UnsafeSelfAliasing | Error | Incompatible usages on same step for same data |
 | Type mismatch | TypeMismatch | Error | Type incompatibility is immediate and permanent |
 | Unused data | UnusedData | Warning | Create without consumers is unusual but valid |
 | Orphan step | OrphanStep | Warning | Step with no fields/links is unusual but valid |

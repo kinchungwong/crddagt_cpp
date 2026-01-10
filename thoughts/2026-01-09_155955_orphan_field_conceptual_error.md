@@ -7,6 +7,7 @@
 
 ## See Also
 
+- [2026-01-10_065043_diagnostic_revamp_mikado_plan.md](2026-01-10_065043_diagnostic_revamp_mikado_plan.md) - Mikado implementation plan (extracted from this document)
 - [2026-01-09_153426_missing_create_seal_sensitivity.md](2026-01-09_153426_missing_create_seal_sensitivity.md) - Related defect (seal-sensitivity); this document supersedes its analysis of OrphanField
 - [2026-01-08_094948_graph_core_design.md](2026-01-08_094948_graph_core_design.md) - Main GraphCore design document
 
@@ -138,7 +139,9 @@ Per the analysis in 2026-01-09_153426, MissingCreate severity depends on seal st
 | Category | Description | Severity | Seal-Sensitive |
 |----------|-------------|----------|----------------|
 | Cycle | Cycle in step ordering | Error | No |
-| UsageConstraint | Multiple Creates, multiple Destroys, self-aliasing | Error | No |
+| MultipleCreate | More than one Create for same data | Error | No |
+| MultipleDestroy | More than one Destroy for same data | Error | No |
+| UnsafeSelfAliasing | Same step has incompatible usages for same data | Error | No |
 | TypeMismatch | Linked fields have incompatible types | Error | No |
 | MissingCreate | Read/Destroy without Create | Warning (open) / Error (sealed) | **Yes** |
 | OrphanStep | Step with no fields and no links | Warning | No |
@@ -147,52 +150,49 @@ Per the analysis in 2026-01-09_153426, MissingCreate severity depends on seal st
 
 **Notes**:
 - `OrphanField` is removed (replaced by correct use of MissingCreate and UnusedData)
+- `UsageConstraint` is split into `MultipleCreate`, `MultipleDestroy`, and `UnsafeSelfAliasing` (see below)
 - `UnusedData` applies to singleton Create or any equivalence class with Create but no Read/Destroy
 - `MissingCreate` is the only seal-sensitive diagnostic
 
+## Semantic Improvement: Splitting UsageConstraint
+
+This section documents a clarity improvement, not a bugfix.
+
+### Rationale
+
+The original `UsageConstraint` category was overly general, grouping three distinct error conditions:
+
+1. **Multiple Creates** - Two or more Create fields for the same data object
+2. **Multiple Destroys** - Two or more Destroy fields for the same data object
+3. **Self-aliasing** - Same step has incompatible field usages (Create+Read, Create+Destroy, or Read+Destroy) for the same data
+
+These are semantically distinct violations with different root causes and different remediation strategies. Grouping them under a single category obscures the specific issue.
+
+### New Categories
+
+| Old Category | New Category | Description |
+|--------------|--------------|-------------|
+| UsageConstraint | **MultipleCreate** | Data object has more than one Create field |
+| UsageConstraint | **MultipleDestroy** | Data object has more than one Destroy field |
+| UsageConstraint | **UnsafeSelfAliasing** | Same step accesses same data with incompatible usages |
+
+### Naming Considerations
+
+- **MultipleCreate / MultipleDestroy**: Direct and unambiguous. Clearly states the constraint violation.
+- **UnsafeSelfAliasing**: The term "self-aliasing" describes the situation (same step, same data, multiple fields). The prefix "Unsafe" distinguishes it from safe self-aliasing (multiple Reads on the same step for the same data, which is allowed).
+
 ## Implementation Plan
 
-### Phase 1: Fix MissingCreate Condition
+> **Moved**: The implementation plan has been extracted into a dedicated Mikado plan document with expanded phases and decisions.
+>
+> See: [2026-01-10_065043_diagnostic_revamp_mikado_plan.md](2026-01-10_065043_diagnostic_revamp_mikado_plan.md)
 
-1. Change condition from `fields.size() > 1` to check for Read/Destroy presence
-2. Remove or update the misleading comment
-
-### Phase 2: Handle OrphanField Category
-
-**If removing:**
-1. Remove `OrphanField` from `DiagnosticCategory` enum
-2. Remove orphan field detection loop from `get_diagnostics()`
-3. Update tests to expect MissingCreate instead of OrphanField for singleton Read/Destroy
-
-**If renaming to UnusedData:**
-1. Rename enum value
-2. Change detection logic to: Create exists AND no Read AND no Destroy
-3. Update tests
-
-### Phase 3: Add Seal-Sensitivity
-
-1. Add `treat_as_sealed` parameter to `get_diagnostics()`
-2. Set MissingCreate severity based on parameter
-3. Update `export_graph()` to pass `true`
-
-### Phase 4: Test Coverage
-
-Ensure tests for:
-- Singleton Create → Valid (no error, possibly UnusedData warning)
-- Singleton Read → MissingCreate
-- Singleton Destroy → MissingCreate
-- Linked Read+Destroy → MissingCreate
-- Linked Create+Read → Valid
-- MissingCreate severity changes with seal state
-
-## Affected Files
-
-| File | Changes |
-|------|---------|
-| `graph_core_diagnostics.hpp` | Update/remove `OrphanField` enum |
-| `graph_core.cpp` | Fix MissingCreate condition, update orphan field logic |
-| `graph_core_diagnostics_tests.cpp` | Update tests for new behavior |
-| `2026-01-09_153426_*.md` | Mark superseded sections |
+The Mikado plan includes:
+- 9 implementation phases (expanded from 4)
+- Decisions record (D1-D4)
+- Dangers of invalid graph instantiation
+- Goal tree visualization
+- Affected files list
 
 ## Resolved Questions
 
@@ -220,6 +220,8 @@ Multiple Reads linked together, no Create. This is MissingCreate, same as other 
 | 2026-01-09 | Claude Opus 4.5 | Resolved Q1: singleton Create receives UnusedData warning (seal-insensitive) |
 | 2026-01-09 | Claude Opus 4.5 | Resolved Q2: Read+Read without Create is MissingCreate |
 | 2026-01-09 | Claude Opus 4.5 | Updated diagnostic categories table with seal-sensitivity column |
+| 2026-01-09 | Claude Opus 4.5 | Semantic improvement: split UsageConstraint into MultipleCreate, MultipleDestroy, UnsafeSelfAliasing |
+| 2026-01-10 | Claude Opus 4.5 | Extracted implementation plan to dedicated Mikado plan document |
 
 ---
 
