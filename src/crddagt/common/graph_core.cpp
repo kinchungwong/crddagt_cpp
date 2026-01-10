@@ -394,6 +394,122 @@ bool GraphCore::is_reachable_from(StepIdx from, StepIdx target) const
 }
 
 // ============================================================================
+// Tarjan's SCC algorithm (iterative, for precise cycle reporting)
+// ============================================================================
+
+namespace
+{
+
+/**
+ * @brief Iterative Tarjan's SCC algorithm.
+ *
+ * This is a helper function to find strongly connected components in a directed
+ * graph. It uses an explicit stack to simulate recursion, avoiding stack overflow
+ * on large graphs.
+ *
+ * @param vertex_count Number of vertices (assumed dense 0..vertex_count-1)
+ * @param adj Adjacency list (adj[v] = list of successors of v)
+ * @return Vector of SCCs, each SCC is a vector of vertex indices. SCCs are
+ *         returned in reverse topological order (leaves first).
+ */
+std::vector<std::vector<size_t>> find_strongly_connected_components(
+    size_t vertex_count,
+    const std::vector<std::vector<size_t>>& adj)
+{
+    constexpr size_t UNDEFINED = ~static_cast<size_t>(0);
+
+    std::vector<size_t> index(vertex_count, UNDEFINED);
+    std::vector<size_t> lowlink(vertex_count, UNDEFINED);
+    std::vector<bool> on_stack(vertex_count, false);
+    std::vector<size_t> scc_stack;
+    std::vector<std::vector<size_t>> sccs;
+    size_t index_counter = 0;
+
+    // Stack frame for iterative DFS
+    struct Frame
+    {
+        size_t v;
+        size_t neighbor_idx;
+    };
+    std::vector<Frame> call_stack;
+
+    for (size_t start = 0; start < vertex_count; ++start)
+    {
+        if (index[start] != UNDEFINED)
+        {
+            continue;
+        }
+
+        // Start DFS from 'start'
+        call_stack.push_back({start, 0});
+        index[start] = index_counter;
+        lowlink[start] = index_counter;
+        ++index_counter;
+        on_stack[start] = true;
+        scc_stack.push_back(start);
+
+        while (!call_stack.empty())
+        {
+            Frame& frame = call_stack.back();
+            size_t v = frame.v;
+
+            if (frame.neighbor_idx < adj[v].size())
+            {
+                size_t w = adj[v][frame.neighbor_idx];
+                ++frame.neighbor_idx;
+
+                if (index[w] == UNDEFINED)
+                {
+                    // Recurse: push new frame
+                    call_stack.push_back({w, 0});
+                    index[w] = index_counter;
+                    lowlink[w] = index_counter;
+                    ++index_counter;
+                    on_stack[w] = true;
+                    scc_stack.push_back(w);
+                }
+                else if (on_stack[w])
+                {
+                    // w is on stack, update lowlink
+                    lowlink[v] = std::min(lowlink[v], index[w]);
+                }
+            }
+            else
+            {
+                // Done processing neighbors, return from this frame
+                call_stack.pop_back();
+
+                if (!call_stack.empty())
+                {
+                    // Update parent's lowlink
+                    size_t parent = call_stack.back().v;
+                    lowlink[parent] = std::min(lowlink[parent], lowlink[v]);
+                }
+
+                // Check if v is root of an SCC
+                if (lowlink[v] == index[v])
+                {
+                    std::vector<size_t> scc;
+                    size_t w;
+                    do
+                    {
+                        w = scc_stack.back();
+                        scc_stack.pop_back();
+                        on_stack[w] = false;
+                        scc.push_back(w);
+                    } while (w != v);
+                    sccs.push_back(std::move(scc));
+                }
+            }
+        }
+    }
+
+    return sccs;
+}
+
+} // anonymous namespace
+
+// ============================================================================
 // Diagnostics and export
 // ============================================================================
 
@@ -415,6 +531,34 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
     {
         FieldIdx root = field_uf.find(fidx);
         equiv_classes[root].emplace_back(fidx, m_field_owner_step[fidx], m_field_usages[fidx]);
+    }
+
+    // Compute minimum trust level per equivalence class from field links.
+    // This trust level will be used for implicit step links derived from the class.
+    std::unordered_map<FieldIdx, TrustLevel> equiv_class_min_trust;
+    std::unordered_map<FieldIdx, std::vector<size_t>> equiv_class_field_links;
+
+    for (size_t link_idx = 0; link_idx < m_field_links.size(); ++link_idx)
+    {
+        const auto& [f1, f2] = m_field_links[link_idx];
+        FieldIdx root = field_uf.find(f1); // f1 and f2 should have same root
+        TrustLevel trust = m_field_link_trust[link_idx];
+
+        equiv_class_field_links[root].push_back(link_idx);
+
+        auto it = equiv_class_min_trust.find(root);
+        if (it == equiv_class_min_trust.end())
+        {
+            equiv_class_min_trust[root] = trust;
+        }
+        else
+        {
+            // Keep minimum (Low < Middle < High)
+            if (static_cast<int>(trust) < static_cast<int>(it->second))
+            {
+                it->second = trust;
+            }
+        }
     }
 
     // =========================================================================
@@ -606,8 +750,18 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
     // Phase 4: Cycle detection using Kahn's algorithm
     // =========================================================================
 
+    // Structure to track implicit step links with trust level and causing field links
+    struct ImplicitStepLink
+    {
+        StepIdx before;
+        StepIdx after;
+        TrustLevel trust;
+        std::vector<size_t> causing_field_links;
+    };
+
     // Build combined step links (explicit + implicit)
     std::vector<StepLinkPair> combined_links = m_explicit_step_links;
+    std::vector<ImplicitStepLink> implicit_step_links;
 
     // Add implicit links from usage ordering
     for (const auto& [root, fields] : equiv_classes)
@@ -632,6 +786,21 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
             }
         }
 
+        // Get trust level and field links for this equivalence class
+        TrustLevel class_trust = TrustLevel::High; // Default if no field links
+        auto trust_it = equiv_class_min_trust.find(root);
+        if (trust_it != equiv_class_min_trust.end())
+        {
+            class_trust = trust_it->second;
+        }
+
+        std::vector<size_t> class_field_links;
+        auto links_it = equiv_class_field_links.find(root);
+        if (links_it != equiv_class_field_links.end())
+        {
+            class_field_links = links_it->second;
+        }
+
         // Create -> Read
         for (StepIdx cs : create_steps)
         {
@@ -640,6 +809,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
                 if (cs != rs)
                 {
                     combined_links.emplace_back(cs, rs);
+                    implicit_step_links.push_back({cs, rs, class_trust, class_field_links});
                 }
             }
         }
@@ -652,6 +822,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
                 if (cs != ds)
                 {
                     combined_links.emplace_back(cs, ds);
+                    implicit_step_links.push_back({cs, ds, class_trust, class_field_links});
                 }
             }
         }
@@ -664,6 +835,7 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
                 if (rs != ds)
                 {
                     combined_links.emplace_back(rs, ds);
+                    implicit_step_links.push_back({rs, ds, class_trust, class_field_links});
                 }
             }
         }
@@ -715,17 +887,91 @@ std::shared_ptr<GraphCoreDiagnostics> GraphCore::get_diagnostics(bool treat_as_s
             item.category = DiagnosticCategory::Cycle;
             item.message = "Cycle detected in step ordering";
 
-            // Collect steps involved in cycle (those with remaining in-degree > 0)
+            // Build the remaining subgraph for precise cycle reporting using Tarjan's SCC.
+            // This ensures we only report actual cycle participants, not downstream steps.
+
+            // Step 1: Identify remaining vertices (those with in_degree > 0)
+            std::vector<StepIdx> remaining_steps;
+            std::unordered_map<StepIdx, size_t> step_to_subgraph_idx;
             for (StepIdx s = 0; s < m_step_count; ++s)
             {
                 if (in_degree[s] > 0)
                 {
-                    item.involved_steps.push_back(s);
+                    step_to_subgraph_idx[s] = remaining_steps.size();
+                    remaining_steps.push_back(s);
                 }
             }
 
+            // Step 2: Build adjacency list for the remaining subgraph
+            std::vector<std::vector<size_t>> subgraph_adj(remaining_steps.size());
+            for (const auto& [before, after] : combined_links)
+            {
+                auto it_before = step_to_subgraph_idx.find(before);
+                auto it_after = step_to_subgraph_idx.find(after);
+                if (it_before != step_to_subgraph_idx.end() &&
+                    it_after != step_to_subgraph_idx.end())
+                {
+                    subgraph_adj[it_before->second].push_back(it_after->second);
+                }
+            }
+
+            // Step 3: Run Tarjan's SCC on the remaining subgraph
+            auto sccs = find_strongly_connected_components(remaining_steps.size(), subgraph_adj);
+
+            // Step 4: Collect only steps in non-trivial SCCs (size > 1 = actual cycle)
+            for (const auto& scc : sccs)
+            {
+                if (scc.size() > 1)
+                {
+                    for (size_t subgraph_idx : scc)
+                    {
+                        item.involved_steps.push_back(remaining_steps[subgraph_idx]);
+                    }
+                }
+            }
+
+            // Sort involved_steps for deterministic output
+            std::sort(item.involved_steps.begin(), item.involved_steps.end());
+
             // Blame analysis: find explicit step links involved in cycle
             add_step_link_blame(item, item.involved_steps);
+
+            // Blame analysis: find implicit step links involved in cycle
+            // For implicit links, blame the causing field links instead
+            std::unordered_set<StepIdx> cycle_steps(item.involved_steps.begin(),
+                                                    item.involved_steps.end());
+            std::vector<std::pair<size_t, TrustLevel>> implicit_blamed;
+
+            for (const auto& ilink : implicit_step_links)
+            {
+                // Check if this implicit link connects two steps in the cycle
+                if (cycle_steps.count(ilink.before) > 0 &&
+                    cycle_steps.count(ilink.after) > 0)
+                {
+                    // Add the causing field links with their trust level
+                    for (size_t fl_idx : ilink.causing_field_links)
+                    {
+                        implicit_blamed.emplace_back(fl_idx, ilink.trust);
+                    }
+                }
+            }
+
+            // Sort by trust level (Low first)
+            std::sort(implicit_blamed.begin(), implicit_blamed.end(),
+                      [](const auto& a, const auto& b) {
+                          return static_cast<int>(a.second) < static_cast<int>(b.second);
+                      });
+
+            // Add to blamed_field_links (avoiding duplicates)
+            std::unordered_set<size_t> existing_blamed(item.blamed_field_links.begin(),
+                                                       item.blamed_field_links.end());
+            for (const auto& [fl_idx, trust] : implicit_blamed)
+            {
+                if (existing_blamed.insert(fl_idx).second)
+                {
+                    item.blamed_field_links.push_back(fl_idx);
+                }
+            }
 
             diagnostics->m_errors.push_back(std::move(item));
         }

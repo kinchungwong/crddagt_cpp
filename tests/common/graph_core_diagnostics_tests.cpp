@@ -6,6 +6,7 @@
  * All tests are expected to FAIL initially since get_diagnostics() returns empty.
  */
 #include <gtest/gtest.h>
+#include <algorithm>
 #include "crddagt/common/graph_core.hpp"
 
 using namespace crddagt;
@@ -164,6 +165,56 @@ TEST(GraphCoreDiagnosticsTests, Cycle_ImplicitFromUsageOrdering_NonEager)
         if (item.category == DiagnosticCategory::Cycle)
         {
             found_cycle = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_cycle);
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_ImplicitOnly_BlameNonEmpty_NonEager)
+{
+    // Create a cycle using only implicit step links (no explicit step links)
+    // Step 0: Create D1, Read D2  - must run after B creates D2, before B reads D1
+    // Step 1: Create D2, Read D1  - must run after A creates D1, before A reads D2
+    // Implicit links: A→B (from D1), B→A (from D2) = cycle
+    GraphCore graph(false);
+    graph.add_step(0); // A
+    graph.add_step(1); // B
+
+    // D1: A creates, B reads
+    // add_field(step_idx, field_idx, type, usage)
+    graph.add_field(0, 0, typeid(int), Usage::Create);  // Field 0: A creates D1
+    graph.add_field(1, 1, typeid(int), Usage::Read);    // Field 1: B reads D1
+
+    // D2: B creates, A reads
+    graph.add_field(1, 2, typeid(float), Usage::Create); // Field 2: B creates D2
+    graph.add_field(0, 3, typeid(float), Usage::Read);   // Field 3: A reads D2
+
+    // Link fields to form two data objects
+    graph.link_fields(0, 1, TrustLevel::Low);   // D1: Create(A)↔Read(B) → implicit A→B
+    graph.link_fields(2, 3, TrustLevel::Middle); // D2: Create(B)↔Read(A) → implicit B→A
+
+    auto diag = graph.get_diagnostics();
+    EXPECT_TRUE(diag->has_errors());
+
+    bool found_cycle = false;
+    for (const auto& item : diag->errors())
+    {
+        if (item.category == DiagnosticCategory::Cycle)
+        {
+            found_cycle = true;
+
+            // Both steps should be involved
+            EXPECT_EQ(item.involved_steps.size(), 2u);
+
+            // No explicit step links, so blamed_step_links should be empty
+            EXPECT_TRUE(item.blamed_step_links.empty());
+
+            // But blamed_field_links should NOT be empty (implicit links blame their field links)
+            EXPECT_FALSE(item.blamed_field_links.empty()) << "Implicit-only cycle should have blamed_field_links";
+
+            // Should have both field links (0 and 1 are the link indices)
+            EXPECT_GE(item.blamed_field_links.size(), 1u);
             break;
         }
     }
@@ -364,6 +415,97 @@ TEST(GraphCoreDiagnosticsTests, Cycle_BlameOrdersByTrustLevel_NonEager)
             break;
         }
     }
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_PreciseReporting_ExcludesDownstream_NonEager)
+{
+    // Graph: A→B→C→B (cycle), then C→D→E (downstream chain)
+    // Only B and C should be reported, not D or E
+    GraphCore graph(false);
+    graph.add_step(0); // A
+    graph.add_step(1); // B
+    graph.add_step(2); // C
+    graph.add_step(3); // D
+    graph.add_step(4); // E
+
+    // A→B→C→B cycle
+    graph.link_steps(0, 1, TrustLevel::High); // A→B
+    graph.link_steps(1, 2, TrustLevel::High); // B→C
+    graph.link_steps(2, 1, TrustLevel::Low);  // C→B (back edge, creates cycle)
+
+    // Downstream: C→D→E
+    graph.link_steps(2, 3, TrustLevel::High); // C→D
+    graph.link_steps(3, 4, TrustLevel::High); // D→E
+
+    auto diag = graph.get_diagnostics();
+    EXPECT_TRUE(diag->has_errors());
+
+    bool found_cycle = false;
+    for (const auto& item : diag->errors())
+    {
+        if (item.category == DiagnosticCategory::Cycle)
+        {
+            found_cycle = true;
+
+            // Only B (1) and C (2) should be in the cycle, not A, D, or E
+            EXPECT_EQ(item.involved_steps.size(), 2u);
+
+            // Verify the cycle members (sorted)
+            std::vector<size_t> expected = {1, 2}; // B and C
+            EXPECT_EQ(item.involved_steps, expected);
+            break;
+        }
+    }
+    EXPECT_TRUE(found_cycle);
+}
+
+TEST(GraphCoreDiagnosticsTests, Cycle_PreciseReporting_MultipleDisjointCycles_NonEager)
+{
+    // Graph has two disjoint cycles:
+    // Cycle 1: A→B→A (steps 0, 1)
+    // Cycle 2: C→D→E→C (steps 2, 3, 4)
+    // Plus a downstream step F (step 5) that depends on E
+    GraphCore graph(false);
+    graph.add_step(0); // A
+    graph.add_step(1); // B
+    graph.add_step(2); // C
+    graph.add_step(3); // D
+    graph.add_step(4); // E
+    graph.add_step(5); // F
+
+    // Cycle 1: A→B→A
+    graph.link_steps(0, 1, TrustLevel::High);
+    graph.link_steps(1, 0, TrustLevel::High);
+
+    // Cycle 2: C→D→E→C
+    graph.link_steps(2, 3, TrustLevel::High);
+    graph.link_steps(3, 4, TrustLevel::High);
+    graph.link_steps(4, 2, TrustLevel::High);
+
+    // Downstream: E→F (F is not in any cycle)
+    graph.link_steps(4, 5, TrustLevel::High);
+
+    auto diag = graph.get_diagnostics();
+    EXPECT_TRUE(diag->has_errors());
+
+    bool found_cycle = false;
+    for (const auto& item : diag->errors())
+    {
+        if (item.category == DiagnosticCategory::Cycle)
+        {
+            found_cycle = true;
+
+            // All 5 cycle members (A, B, C, D, E) but not F
+            EXPECT_EQ(item.involved_steps.size(), 5u);
+
+            // Verify F (step 5) is NOT included
+            auto it = std::find(item.involved_steps.begin(),
+                                item.involved_steps.end(), size_t{5});
+            EXPECT_EQ(it, item.involved_steps.end()) << "F should not be in cycle";
+            break;
+        }
+    }
+    EXPECT_TRUE(found_cycle);
 }
 
 // ============================================================================
