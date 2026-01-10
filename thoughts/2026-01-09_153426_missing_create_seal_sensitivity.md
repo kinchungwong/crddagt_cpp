@@ -77,7 +77,7 @@ Although GraphCore does not own the sealing lifecycle, it must be informed of th
 
 ### Diagnostics That Are Seal-Insensitive
 
-These diagnostics have the same meaning regardless of graph state:
+These diagnostics have the same severity regardless of graph state:
 
 | Diagnostic | Category | Severity | Reason |
 |------------|----------|----------|--------|
@@ -86,22 +86,37 @@ These diagnostics have the same meaning regardless of graph state:
 | Multiple Destroys | UsageConstraint | Error | Already have too many; adding more makes it worse |
 | Self-aliasing | UsageConstraint | Error | Incompatible usages on same step for same data |
 | Type mismatch | TypeMismatch | Error | Type incompatibility is immediate and permanent |
+| Unused data | UnusedData | Warning | Create without consumers is unusual but valid |
+| Orphan step | OrphanStep | Warning | Step with no fields/links is unusual but valid |
 
 ### Diagnostics That Are Seal-Sensitive
 
-| Diagnostic | Open Severity | Sealed Severity | Reason |
-|------------|---------------|-----------------|--------|
-| Missing Create | Warning | Error | Create may be added later |
-| Orphan step | Warning | Warning | Informational in both cases |
-| Orphan field | Warning | Warning | Informational in both cases |
+MissingCreate is the only seal-sensitive diagnostic. All other diagnostics have fixed severity regardless of whether the graph is open or sealed.
 
-**Note**: Orphan warnings remain warnings even when sealed. They indicate potential issues but do not prevent a valid execution order from being computed.
+| Diagnostic | Category | Open Severity | Sealed Severity | Reason |
+|------------|----------|---------------|-----------------|--------|
+| Missing Create | MissingCreate | Warning | Error | Create may be added later |
 
-### Edge Case: Missing Create with Existing Reads/Destroys
+### MissingCreate Specification
 
-The current implementation only reports "missing Create" when `fields.size() > 1`, i.e., when the equivalence class has multiple fields. A singleton field (not linked to anything) does not trigger this error—it triggers "orphan field" instead.
+**MissingCreate** applies to any equivalence class that contains Read or Destroy fields but no Create field. This includes:
 
-This is correct behavior: a singleton Create field is valid (the data is created but never used). A singleton Read or Destroy field is an orphan warning, not a missing-Create error, because there's no evidence it's part of a multi-field data flow.
+- Singleton Read (one Read field, not linked to anything)
+- Singleton Destroy (one Destroy field, not linked to anything)
+- Linked Read + Destroy (no Create)
+- Linked Read + Read (no Create)
+- Any other combination lacking a Create
+
+**Rationale**: A Read or Destroy field declares intent to access data. That data must be created by some Create field. The absence of Create means the data lifecycle is incomplete. Whether the field is linked to others (equivalence class size) is irrelevant to this constraint.
+
+**Valid cases** (no MissingCreate error):
+
+- Singleton Create: Data created, never consumed. Receives **UnusedData warning** (seal-insensitive).
+- Create + Read: Normal data flow.
+- Create + Destroy: Data created and destroyed.
+- Create + Read + Destroy: Complete lifecycle.
+
+> **Historical note**: This section was revised on 2026-01-09. The original document incorrectly stated that singleton Read/Destroy should receive an "OrphanField" warning instead of MissingCreate. This was based on a flawed condition `fields.size() > 1` that excluded singletons from MissingCreate detection. The `OrphanField` concept conflated linkage status with missing Create, which are distinct issues. See [2026-01-09_155955_orphan_field_conceptual_error.md](2026-01-09_155955_orphan_field_conceptual_error.md) for full analysis.
 
 ## Proposed Fix
 
