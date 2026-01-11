@@ -747,6 +747,38 @@ TEST(IterableUnionFindTests, InitSets_Uint8_MaxElements) {
     EXPECT_EQ(uf.class_size(100), 1u);
 }
 
+TEST(IterableUnionFindTests, InitSets_Uint8_ArgumentUnderflow) {
+    IterableUnionFind<uint8_t> uf;
+    EXPECT_THROW(uf.init_sets(-1), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+    EXPECT_THROW(uf.init_sets(-128), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+}
+
+TEST(IterableUnionFindTests, InitSets_Uint8_ArgumentOverflow) {
+    IterableUnionFind<uint8_t> uf;
+    EXPECT_THROW(uf.init_sets(256), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+    EXPECT_THROW(uf.init_sets(257), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+}
+
+TEST(IterableUnionFindTests, InitSets_Uint16_ArgumentOverflow) {
+    IterableUnionFind<uint16_t> uf;
+    EXPECT_THROW(uf.init_sets(65536), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+    EXPECT_THROW(uf.init_sets(65537), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+}
+
+TEST(IterableUnionFindTests, InitSets_Uint16_ArgumentUnderflow) {
+    IterableUnionFind<uint16_t> uf;
+    EXPECT_THROW(uf.init_sets(-1), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+    EXPECT_THROW(uf.init_sets(-32768), std::overflow_error);
+    EXPECT_EQ(uf.element_count(), 0u);
+}
+
 TEST(IterableUnionFindTests, InitSets_AllowsSubsequentMakeSetUntilOverflow) {
     IterableUnionFind<uint8_t> uf;
     uf.init_sets(250);

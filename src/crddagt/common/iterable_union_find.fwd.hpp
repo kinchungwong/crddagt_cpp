@@ -9,8 +9,7 @@ namespace crddagt {
 /**
  * @brief Forward declaration of IterableUnionFind.
  *
- * @tparam Idx The index type, defaults to size_t. Must be unsigned.
- *         Supports uint16_t, uint32_t, uint64_t, or size_t.
+ * @tparam Idx The index type. Refer to iterable_union_find.hpp.
  */
 template <typename Idx>
 class IterableUnionFind;

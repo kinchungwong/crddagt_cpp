@@ -23,22 +23,40 @@ void IterableUnionFind<Idx>::reserve(size_t reserve_size)
 }
 
 template <typename Idx>
-void IterableUnionFind<Idx>::init_sets(Idx count)
+template <typename SizeType>
+void IterableUnionFind<Idx>::init_sets(SizeType count)
 {
     if (!m_nodes.empty()) {
         throw std::logic_error(
             "IterableUnionFind::init_sets: cannot call on non-empty instance");
     }
 
-    if (count == 0) {
-        return;
+    // Overflow check: ensure count fits.
+    // Note: SizeType could be int, which is signed. We do not static_assert on SizeType,
+    // only the value of the count argument.
+    if (count < static_cast<SizeType>(0))
+    {
+        throw std::overflow_error(
+            "IterableUnionFind::init_sets: count cannot be negative");
     }
-
-    // Overflow check: ensure count fits
-    if (static_cast<size_t>(count) > static_cast<size_t>(std::numeric_limits<Idx>::max())) {
+    using UT = std::make_unsigned_t<SizeType>;
+    using WUT = std::conditional_t<
+        (sizeof(UT) < sizeof(size_t)),
+        size_t,
+        UT>;
+    if (static_cast<WUT>(count) > static_cast<WUT>(std::numeric_limits<Idx>::max())) {
         throw std::overflow_error(
             "IterableUnionFind::init_sets: count exceeds maximum of " +
             std::to_string(std::numeric_limits<Idx>::max()));
+    }
+    init_sets_impl(static_cast<Idx>(count));
+}
+
+template <typename Idx>
+void IterableUnionFind<Idx>::init_sets_impl(Idx count)
+{
+    if (count == 0) {
+        return;
     }
 
     m_nodes.reserve(static_cast<size_t>(count));
@@ -152,9 +170,9 @@ bool IterableUnionFind<Idx>::unite(Idx a, Idx b)
 // =============================================================================
 
 template <typename Idx>
-Idx IterableUnionFind<Idx>::class_size(Idx x) const
+size_t IterableUnionFind<Idx>::class_size(Idx x) const
 {
-    return m_nodes[class_root(x)].size;
+    return static_cast<size_t>(m_nodes[class_root(x)].size);
 }
 
 template <typename Idx>

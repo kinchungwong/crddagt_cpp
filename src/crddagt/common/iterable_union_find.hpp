@@ -19,7 +19,8 @@ namespace crddagt {
  * - **Circular linked list**: Enables O(class_size) enumeration of class members
  *
  * @tparam Idx The index type, defaults to size_t. Must be unsigned.
- *         Supports uint16_t, uint32_t, uint64_t, or size_t.
+ *         Supports uint16_t, uint32_t, or size_t.
+ *         uint64_t is supported if exclusively targeting 64-bit platforms.
  *
  * @par Thread Safety
  * Externally synchronized. No internal synchronization. Caller must ensure:
@@ -47,6 +48,9 @@ class IterableUnionFind {
 public:
     static_assert(std::is_unsigned_v<Idx>,
                   "IterableUnionFind: Idx must be an unsigned type");
+
+    static_assert(sizeof(Idx) <= sizeof(size_t),
+                  "IterableUnionFind: Idx size must not exceed size_t size");
 
     /**
      * @brief Per-element node storing union-find metadata.
@@ -90,7 +94,8 @@ public:
      * @param count The number of singleton sets to initialize with.
      * @throws std::logic_error if called on a non-empty instance.
      */
-    void init_sets(Idx count);
+    template <typename SizeType>
+    void init_sets(SizeType count);
 
     /**
      * @brief Creates a new singleton set and returns its index.
@@ -153,7 +158,7 @@ public:
      * @return The number of elements in the class containing x
      * @throw std::runtime_error if x is out of range
      */
-    [[nodiscard]] Idx class_size(Idx x) const;
+    [[nodiscard]] size_t class_size(Idx x) const;
 
     /**
      * @brief Returns the rank of the tree containing x.
@@ -263,6 +268,8 @@ public:
     void export_nodes(std::vector<Node>& out) const;
 
 private:
+    void init_sets_impl(Idx count);
+
     /**
      * @brief Validates that an index is within the valid range.
      *
