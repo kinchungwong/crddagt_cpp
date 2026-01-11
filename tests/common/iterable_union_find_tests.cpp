@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <set>
 #include <numeric>
-#include "crddagt/common/iterable_union_find.hpp"
+#include "crddagt/common/iterable_union_find.inline.hpp"
 
 using namespace crddagt;
 

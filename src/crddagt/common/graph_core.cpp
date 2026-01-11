@@ -2,6 +2,7 @@
  * @file graph_core.cpp
  */
 #include "crddagt/common/graph_core.hpp"
+#include "crddagt/common/iterable_union_find.inline.hpp"
 
 #include <algorithm>
 #include <queue>
