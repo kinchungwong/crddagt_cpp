@@ -661,3 +661,101 @@ TEST(IterableUnionFindTests, PostOverflow_BalancedTreeUnite_OperationsWork) {
     uf.get_class_members(50, members);
     EXPECT_EQ(members.size(), 128u);
 }
+
+// =============================================================================
+// Reserve and InitSets Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, Reserve_DoesNotChangeElementCount) {
+    IterableUnionFind<size_t> uf;
+    uf.reserve(100);
+    EXPECT_EQ(uf.element_count(), 0u);
+}
+
+TEST(IterableUnionFindTests, Reserve_AllowsSubsequentMakeSets) {
+    IterableUnionFind<size_t> uf;
+    uf.reserve(10);
+    for (int i = 0; i < 10; ++i) {
+        EXPECT_NO_THROW(uf.make_set());
+    }
+    EXPECT_EQ(uf.element_count(), 10u);
+}
+
+TEST(IterableUnionFindTests, Reserve_ClampsToMaxForSmallIdx) {
+    // uint8_t max is 255, reserving more should clamp
+    IterableUnionFind<uint8_t> uf;
+    EXPECT_NO_THROW(uf.reserve(1000));
+    // Should still be able to create up to 255 elements
+    for (int i = 0; i < 255; ++i) {
+        uf.make_set();
+    }
+    EXPECT_EQ(uf.element_count(), 255u);
+    EXPECT_THROW(uf.make_set(), std::overflow_error);
+}
+
+TEST(IterableUnionFindTests, InitSets_CreatesCorrectNumberOfSingletons) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(10);
+    EXPECT_EQ(uf.element_count(), 10u);
+}
+
+TEST(IterableUnionFindTests, InitSets_EachElementIsSelfRoot) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    for (size_t i = 0; i < 5; ++i) {
+        EXPECT_EQ(uf.find(i), i);
+    }
+}
+
+TEST(IterableUnionFindTests, InitSets_EachElementHasSizeOne) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    for (size_t i = 0; i < 5; ++i) {
+        EXPECT_EQ(uf.class_size(i), 1u);
+    }
+}
+
+TEST(IterableUnionFindTests, InitSets_ElementsCanBeUnited) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    EXPECT_TRUE(uf.unite(0, 1));
+    EXPECT_TRUE(uf.unite(2, 3));
+    EXPECT_TRUE(uf.unite(0, 2));
+    EXPECT_EQ(uf.class_size(0), 4u);
+    EXPECT_EQ(uf.class_size(4), 1u);
+}
+
+TEST(IterableUnionFindTests, InitSets_ThrowsOnNonEmpty) {
+    IterableUnionFind<size_t> uf;
+    uf.make_set();
+    EXPECT_THROW(uf.init_sets(10), std::logic_error);
+}
+
+TEST(IterableUnionFindTests, InitSets_ZeroCreatesEmpty) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(0);
+    EXPECT_EQ(uf.element_count(), 0u);
+}
+
+TEST(IterableUnionFindTests, InitSets_Uint8_MaxElements) {
+    IterableUnionFind<uint8_t> uf;
+    uf.init_sets(255);
+    EXPECT_EQ(uf.element_count(), 255u);
+    // Verify a few elements
+    EXPECT_EQ(uf.find(0), 0);
+    EXPECT_EQ(uf.find(254), 254);
+    EXPECT_EQ(uf.class_size(100), 1u);
+}
+
+TEST(IterableUnionFindTests, InitSets_AllowsSubsequentMakeSetUntilOverflow) {
+    IterableUnionFind<uint8_t> uf;
+    uf.init_sets(250);
+    EXPECT_EQ(uf.element_count(), 250u);
+    // Can still add 5 more
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_NO_THROW(uf.make_set());
+    }
+    EXPECT_EQ(uf.element_count(), 255u);
+    // Next should overflow
+    EXPECT_THROW(uf.make_set(), std::overflow_error);
+}

@@ -10,6 +10,47 @@ namespace crddagt {
 // =============================================================================
 
 template <typename Idx>
+void IterableUnionFind<Idx>::reserve(size_t reserve_size)
+{
+    // Clamp to max allowed elements
+    size_t max_elements = static_cast<size_t>(std::numeric_limits<Idx>::max());
+    if (reserve_size > max_elements) {
+        reserve_size = max_elements;
+    }
+    m_nodes.reserve(reserve_size);
+}
+
+template <typename Idx>
+void IterableUnionFind<Idx>::init_sets(Idx count)
+{
+    if (!m_nodes.empty()) {
+        throw std::logic_error(
+            "IterableUnionFind::init_sets: cannot call on non-empty instance");
+    }
+
+    if (count == 0) {
+        return;
+    }
+
+    // Overflow check: ensure count fits
+    if (static_cast<size_t>(count) > static_cast<size_t>(std::numeric_limits<Idx>::max())) {
+        throw std::overflow_error(
+            "IterableUnionFind::init_sets: count exceeds maximum of " +
+            std::to_string(std::numeric_limits<Idx>::max()));
+    }
+
+    m_nodes.reserve(static_cast<size_t>(count));
+    for (Idx i = 0; i < count; ++i) {
+        m_nodes.push_back(Node{
+            i,      // parent: self (is own root)
+            0,      // rank: initial 0
+            1,      // size: singleton has size 1
+            i       // next: self-loop (singleton circular list)
+        });
+    }
+}
+
+template <typename Idx>
 Idx IterableUnionFind<Idx>::make_set()
 {
     // Overflow check: ensure the new index fits in Idx

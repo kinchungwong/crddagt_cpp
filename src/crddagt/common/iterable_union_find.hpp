@@ -77,6 +77,25 @@ public:
     // =========================================================================
 
     /**
+     * @brief Reserves capacity for at least the specified number of elements, without creating.
+     * This is a performance optimization to reduce reallocations.
+     *
+     * @param reserve_size The number of elements to reserve space for.
+     *
+     * @note If the reserve_size exceeds the maximum allowed elements, only up to the maximum
+     * will be reserved.
+     */
+    void reserve(size_t reserve_size);
+
+    /**
+     * @brief Initializes the structure with a given number of singleton sets.
+     *
+     * @param count The number of singleton sets to initialize with.
+     * @throws std::logic_error if called on a non-empty instance.
+     */
+    void init_sets(Idx count);
+
+    /**
      * @brief Creates a new singleton set and returns its index.
      *
      * Indices are assigned sequentially starting from 0.
