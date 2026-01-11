@@ -1,6 +1,8 @@
-#ifndef CRDDAGT_COMMON_ITERABLE_UNION_FIND_INLINE_HPP
-#define CRDDAGT_COMMON_ITERABLE_UNION_FIND_INLINE_HPP
-
+/**
+ * @file iterable_union_find.inline.hpp
+ * @brief Function implementations for the IterableUnionFind class template.
+ */
+#pragma once
 #include "crddagt/common/iterable_union_find.hpp"
 
 namespace crddagt {
@@ -190,6 +192,55 @@ bool IterableUnionFind<Idx>::same_class(Idx a, Idx b) const
 }
 
 // =============================================================================
+// Class enumeration
+// =============================================================================
+
+template <typename Idx>
+Idx IterableUnionFind<Idx>::num_classes() const
+{
+    Idx count = 0;
+    for (Idx i = 0; i < static_cast<Idx>(m_nodes.size()); ++i) {
+        if (m_nodes[i].parent == i) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+template <typename Idx>
+void IterableUnionFind<Idx>::get_class_representatives(std::vector<Idx>& out_roots) const
+{
+    out_roots.clear();
+    for (Idx i = 0; i < static_cast<Idx>(m_nodes.size()); ++i) {
+        if (m_nodes[i].parent == i) {
+            out_roots.push_back(i);
+        }
+    }
+}
+
+template <typename Idx>
+void IterableUnionFind<Idx>::get_classes(std::vector<std::vector<Idx>>& out_classes) const
+{
+    out_classes.clear();
+    std::vector<Idx> roots;
+    get_class_representatives(roots);
+    for (Idx root : roots) {
+        out_classes.emplace_back();
+        get_class_members(root, out_classes.back());
+    }
+}
+
+// =========================================================================
+// Full state management
+// =========================================================================
+
+template <typename Idx>
+void IterableUnionFind<Idx>::export_nodes(std::vector<Node>& out) const
+{
+    out = m_nodes;
+}
+
+// =============================================================================
 // Private Helpers
 // =============================================================================
 
@@ -204,5 +255,3 @@ void IterableUnionFind<Idx>::validate_index(Idx x) const
 }
 
 } // namespace crddagt
-
-#endif // CRDDAGT_COMMON_ITERABLE_UNION_FIND_INLINE_HPP

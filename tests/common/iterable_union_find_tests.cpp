@@ -759,3 +759,222 @@ TEST(IterableUnionFindTests, InitSets_AllowsSubsequentMakeSetUntilOverflow) {
     // Next should overflow
     EXPECT_THROW(uf.make_set(), std::overflow_error);
 }
+
+// =============================================================================
+// NumClasses and GetClassRepresentatives Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, NumClasses_EmptyIsZero) {
+    IterableUnionFind<size_t> uf;
+    EXPECT_EQ(uf.num_classes(), 0u);
+}
+
+TEST(IterableUnionFindTests, NumClasses_SingletonsEqualElementCount) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(10);
+    EXPECT_EQ(uf.num_classes(), 10u);
+}
+
+TEST(IterableUnionFindTests, NumClasses_DecreasesAfterUnite) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(10);
+    uf.unite(0, 1);
+    EXPECT_EQ(uf.num_classes(), 9u);
+    uf.unite(2, 3);
+    EXPECT_EQ(uf.num_classes(), 8u);
+    uf.unite(0, 2);
+    EXPECT_EQ(uf.num_classes(), 7u);
+}
+
+TEST(IterableUnionFindTests, NumClasses_UnchangedByDuplicateUnite) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    uf.unite(0, 1);
+    size_t count_before = uf.num_classes();
+    uf.unite(0, 1);  // No-op
+    EXPECT_EQ(uf.num_classes(), count_before);
+}
+
+TEST(IterableUnionFindTests, GetClassRepresentatives_EmptyReturnsEmpty) {
+    IterableUnionFind<size_t> uf;
+    std::vector<size_t> roots;
+    uf.get_class_representatives(roots);
+    EXPECT_TRUE(roots.empty());
+}
+
+TEST(IterableUnionFindTests, GetClassRepresentatives_SingletonsReturnsAll) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    std::vector<size_t> roots;
+    uf.get_class_representatives(roots);
+    ASSERT_EQ(roots.size(), 5u);
+    std::set<size_t> root_set(roots.begin(), roots.end());
+    for (size_t i = 0; i < 5; ++i) {
+        EXPECT_TRUE(root_set.count(i));
+    }
+}
+
+TEST(IterableUnionFindTests, GetClassRepresentatives_AfterUnite) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    uf.unite(0, 1);
+    uf.unite(2, 3);
+
+    std::vector<size_t> roots;
+    uf.get_class_representatives(roots);
+    EXPECT_EQ(roots.size(), 3u);  // {0,1}, {2,3}, {4}
+
+    // Each root should be its own parent
+    for (size_t r : roots) {
+        EXPECT_EQ(uf.class_root(r), r);
+    }
+}
+
+TEST(IterableUnionFindTests, GetClassRepresentatives_CountMatchesNumClasses) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(10);
+    uf.unite(0, 1);
+    uf.unite(2, 3);
+    uf.unite(4, 5);
+    uf.unite(0, 2);
+
+    std::vector<size_t> roots;
+    uf.get_class_representatives(roots);
+    EXPECT_EQ(roots.size(), uf.num_classes());
+}
+
+// =============================================================================
+// ExportNodes Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, ExportNodes_EmptyReturnsEmpty) {
+    IterableUnionFind<size_t> uf;
+    std::vector<IterableUnionFind<size_t>::Node> nodes;
+    uf.export_nodes(nodes);
+    EXPECT_TRUE(nodes.empty());
+}
+
+TEST(IterableUnionFindTests, ExportNodes_SingletonHasCorrectState) {
+    IterableUnionFind<size_t> uf;
+    uf.make_set();
+
+    std::vector<IterableUnionFind<size_t>::Node> nodes;
+    uf.export_nodes(nodes);
+    ASSERT_EQ(nodes.size(), 1u);
+    EXPECT_EQ(nodes[0].parent, 0u);
+    EXPECT_EQ(nodes[0].rank, 0u);
+    EXPECT_EQ(nodes[0].size, 1u);
+    EXPECT_EQ(nodes[0].next, 0u);
+}
+
+TEST(IterableUnionFindTests, ExportNodes_AfterUnite) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(3);
+    uf.unite(0, 1);
+
+    std::vector<IterableUnionFind<size_t>::Node> nodes;
+    uf.export_nodes(nodes);
+    ASSERT_EQ(nodes.size(), 3u);
+
+    // Find the root (the one with size 2)
+    size_t root = (nodes[0].size == 2) ? 0 : 1;
+    size_t non_root = 1 - root;
+
+    EXPECT_EQ(nodes[root].parent, root);
+    EXPECT_EQ(nodes[root].size, 2u);
+    EXPECT_EQ(nodes[non_root].parent, root);
+    EXPECT_EQ(nodes[non_root].size, 0u);
+
+    // Element 2 should still be singleton
+    EXPECT_EQ(nodes[2].parent, 2u);
+    EXPECT_EQ(nodes[2].size, 1u);
+}
+
+// =============================================================================
+// GetClasses Tests
+// =============================================================================
+
+TEST(IterableUnionFindTests, GetClasses_EmptyReturnsEmpty) {
+    IterableUnionFind<size_t> uf;
+    std::vector<std::vector<size_t>> classes;
+    uf.get_classes(classes);
+    EXPECT_TRUE(classes.empty());
+}
+
+TEST(IterableUnionFindTests, GetClasses_SingletonsEachInOwnClass) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    std::vector<std::vector<size_t>> classes;
+    uf.get_classes(classes);
+
+    ASSERT_EQ(classes.size(), 5u);
+    for (size_t i = 0; i < 5; ++i) {
+        ASSERT_EQ(classes[i].size(), 1u);
+        EXPECT_EQ(classes[i][0], i);
+    }
+}
+
+TEST(IterableUnionFindTests, GetClasses_AfterUnite) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(5);
+    uf.unite(0, 1);
+    uf.unite(2, 3);
+
+    std::vector<std::vector<size_t>> classes;
+    uf.get_classes(classes);
+
+    ASSERT_EQ(classes.size(), 3u);  // {0,1}, {2,3}, {4}
+
+    // Verify total element count
+    size_t total = 0;
+    for (const auto& cls : classes) {
+        total += cls.size();
+    }
+    EXPECT_EQ(total, 5u);
+
+    // Verify each class has correct size
+    std::vector<size_t> sizes;
+    for (const auto& cls : classes) {
+        sizes.push_back(cls.size());
+    }
+    std::sort(sizes.begin(), sizes.end());
+    EXPECT_EQ(sizes[0], 1u);  // {4}
+    EXPECT_EQ(sizes[1], 2u);  // {0,1} or {2,3}
+    EXPECT_EQ(sizes[2], 2u);  // {0,1} or {2,3}
+}
+
+TEST(IterableUnionFindTests, GetClasses_MembersMatchGetClassMembers) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(10);
+    uf.unite(0, 1);
+    uf.unite(2, 3);
+    uf.unite(0, 2);
+    uf.unite(5, 6);
+
+    std::vector<std::vector<size_t>> classes;
+    uf.get_classes(classes);
+
+    // For each class, verify members match get_class_members
+    for (const auto& cls : classes) {
+        ASSERT_FALSE(cls.empty());
+        std::vector<size_t> members_from_get;
+        uf.get_class_members(cls[0], members_from_get);
+
+        std::set<size_t> set1(cls.begin(), cls.end());
+        std::set<size_t> set2(members_from_get.begin(), members_from_get.end());
+        EXPECT_EQ(set1, set2);
+    }
+}
+
+TEST(IterableUnionFindTests, GetClasses_CountMatchesNumClasses) {
+    IterableUnionFind<size_t> uf;
+    uf.init_sets(10);
+    uf.unite(0, 1);
+    uf.unite(2, 3);
+    uf.unite(4, 5);
+    uf.unite(0, 2);
+
+    std::vector<std::vector<size_t>> classes;
+    uf.get_classes(classes);
+    EXPECT_EQ(classes.size(), uf.num_classes());
+}

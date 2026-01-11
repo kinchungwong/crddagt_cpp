@@ -1,14 +1,11 @@
-#ifndef CRDDAGT_COMMON_ITERABLE_UNION_FIND_HPP
-#define CRDDAGT_COMMON_ITERABLE_UNION_FIND_HPP
-
+/**
+ * @file iterable_union_find.hpp
+ * @brief Class definition (member declaration) of the IterableUnionFind class template.
+ * @note Source files that use member functions should include iterable_union_find.inline.hpp.
+ */
+#pragma once
+#include "crddagt/common/common.hpp"
 #include "crddagt/common/iterable_union_find.fwd.hpp"
-
-#include <cstddef>
-#include <limits>
-#include <stdexcept>
-#include <string>
-#include <type_traits>
-#include <vector>
 
 namespace crddagt {
 
@@ -45,7 +42,7 @@ namespace crddagt {
  * `alpha(n)` is the inverse Ackermann function, which grows extremely slowly, and is
  * effectively a constant capped at 5 for all practical `n`.
  */
-template <typename Idx>
+template <typename Idx = size_t>
 class IterableUnionFind {
 public:
     static_assert(std::is_unsigned_v<Idx>,
@@ -205,6 +202,66 @@ public:
      */
     [[nodiscard]] bool same_class(Idx a, Idx b) const;
 
+    // =========================================================================
+    // Class enumeration
+    // =========================================================================
+
+    /**
+     * @brief Returns the number of distinct equivalence classes.
+     *
+     * Counts elements that are roots (parent points to self).
+     * This is an O(n) operation.
+     *
+     * @return The number of equivalence classes
+     */
+    [[nodiscard]] Idx num_classes() const;
+
+    /**
+     * @brief Populates a vector with the roots of all distinct equivalence classes.
+     *
+     * Each root uniquely identifies one equivalence class. The output vector
+     * is cleared before populating. Roots are returned in index order.
+     *
+     * @param out_roots Output vector to populate with class roots
+     *
+     * @note Stability of representatives: after unions, the root of a class may
+     *       change, according to union-by-rank rules. The exact rules are considered
+     *       an implementation detail and should not be relied upon.
+     */
+    void get_class_representatives(std::vector<Idx>& out_roots) const;
+
+    /**
+     * @brief Populates a vector with all equivalence classes and their members.
+     *
+     * Convenience method equivalent to calling get_class_representatives()
+     * followed by get_class_members() for each root.
+     *
+     * @param out_classes Output vector to populate with class member lists.
+     *        Classes appear in root index order; members within each class
+     *        appear in circular list traversal order starting from the root.
+     */
+    void get_classes(std::vector<std::vector<Idx>>& out_classes) const;
+
+    // =========================================================================
+    // Full state management
+    // =========================================================================
+
+    /**
+     * @brief Exports a copy of the internal node data.
+     *
+     * Intended for inspection, testing, or serialization. The output is a
+     * snapshot; modifications to the returned vector do not affect this instance.
+     *
+     * @param out Output vector to populate with node data. The vector is
+     *        replaced (not appended to). Each node contains parent, rank,
+     *        size, and next fields as documented in the Node struct.
+     *
+     * @note The internal representation is considered an implementation detail.
+     *       Node field values (especially parent pointers after path compression)
+     *       may vary between equivalent logical states.
+     */
+    void export_nodes(std::vector<Node>& out) const;
+
 private:
     /**
      * @brief Validates that an index is within the valid range.
@@ -218,5 +275,3 @@ private:
 };
 
 } // namespace crddagt
-
-#endif // CRDDAGT_COMMON_ITERABLE_UNION_FIND_HPP

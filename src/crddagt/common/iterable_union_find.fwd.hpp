@@ -1,7 +1,8 @@
-#ifndef CRDDAGT_COMMON_ITERABLE_UNION_FIND_FWD_HPP
-#define CRDDAGT_COMMON_ITERABLE_UNION_FIND_FWD_HPP
-
-#include <cstddef>
+/**
+ * @file iterable_union_find.fwd.hpp
+ * @brief Forward declaration of the IterableUnionFind class template.
+ */
+#pragma once
 
 namespace crddagt {
 
@@ -11,9 +12,7 @@ namespace crddagt {
  * @tparam Idx The index type, defaults to size_t. Must be unsigned.
  *         Supports uint16_t, uint32_t, uint64_t, or size_t.
  */
-template <typename Idx = size_t>
+template <typename Idx>
 class IterableUnionFind;
 
 } // namespace crddagt
-
-#endif // CRDDAGT_COMMON_ITERABLE_UNION_FIND_FWD_HPP
