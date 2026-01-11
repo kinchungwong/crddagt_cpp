@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <algorithm>
+// #include <chrono> // for human review of potentially slow tests only.
 #include <set>
 #include <numeric>
 #include "crddagt/common/iterable_union_find.inline.hpp"
@@ -474,4 +475,189 @@ TEST(IterableUnionFindTests, SameClass_TransitiveAfterUnite_ReturnsTrue) {
     uf.unite(a, b);
     uf.unite(b, c);
     EXPECT_TRUE(uf.same_class(a, c));
+}
+
+// =============================================================================
+// Overflow Tests with Small Index Types
+// =============================================================================
+
+TEST(IterableUnionFindTests, MakeSet_Uint8_OverflowAtMax) {
+    // uint8_t max is 255, so we can create 255 elements (indices 0-254)
+    // The 256th call (which would be index 255) should throw
+    // because m_nodes.size() == 255 >= numeric_limits<uint8_t>::max() == 255
+    IterableUnionFind<uint8_t> uf;
+
+    // Create 255 elements successfully
+    for (int i = 0; i < 255; ++i) {
+        EXPECT_NO_THROW(uf.make_set());
+    }
+    EXPECT_EQ(uf.element_count(), 255u);
+
+    // The 256th call should throw overflow_error
+    EXPECT_THROW(uf.make_set(), std::overflow_error);
+
+    // Element count should still be 255
+    EXPECT_EQ(uf.element_count(), 255u);
+}
+
+TEST(IterableUnionFindTests, MakeSet_Uint16_OverflowAtMax) {
+    // uint16_t max is 65535, so we can create 65535 elements (indices 0-65534)
+    // The 65536th call should throw overflow_error
+    IterableUnionFind<uint16_t> uf;
+
+    // auto start = std::chrono::steady_clock::now();
+
+    // Create 65535 elements successfully
+    for (int i = 0; i < 65535; ++i) {
+        uf.make_set();
+    }
+
+    // auto end = std::chrono::steady_clock::now();
+    // auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    // auto duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+
+    EXPECT_EQ(uf.element_count(), 65535u);
+
+    // Log the duration for informational purposes. Sample output (number from a real run):
+    //   [INFO] Created 65535 uint16_t elements in 1490710 ns
+    // std::cout << "  [INFO] Created 65535 uint16_t elements in " << duration_ns << " ns" << std::endl;
+
+    // The 65536th call should throw overflow_error
+    EXPECT_THROW(uf.make_set(), std::overflow_error);
+
+    // Element count should still be 65535
+    EXPECT_EQ(uf.element_count(), 65535u);
+}
+
+TEST(IterableUnionFindTests, PostOverflow_LinearChainUnite_OperationsWork) {
+    // Fill uint8_t to overflow point and verify operations still work
+    // Uses linear chain unite pattern: 0-1, 1-2, 2-3, ... (keeps rank low)
+    IterableUnionFind<uint8_t> uf;
+
+    // Create all 255 elements
+    for (int i = 0; i < 255; ++i) {
+        uf.make_set();
+    }
+    EXPECT_EQ(uf.element_count(), 255u);
+
+    // Trigger and verify overflow_error
+    EXPECT_THROW(uf.make_set(), std::overflow_error);
+
+    // Leave a few elements unmerged for verification
+    // Unite elements 0 through 250 in a linear chain
+    for (uint8_t i = 0; i < 250; ++i) {
+        EXPECT_TRUE(uf.unite(i, static_cast<uint8_t>(i + 1)));
+    }
+
+    // Verify find works on all merged elements
+    uint8_t root = uf.find(0);
+    for (uint8_t i = 0; i <= 250; ++i) {
+        EXPECT_EQ(uf.find(i), root) << "Element " << static_cast<int>(i) << " has wrong root";
+    }
+
+    // Verify size is correct
+    EXPECT_EQ(uf.class_size(0), 251u);
+
+    // Verify unmerged elements are still separate
+    EXPECT_NE(uf.find(251), root);
+    EXPECT_NE(uf.find(254), root);
+    EXPECT_NE(uf.find(251), uf.find(254));
+    EXPECT_EQ(uf.class_size(251), 1u);
+    EXPECT_EQ(uf.class_size(254), 1u);
+
+    // Verify same_class works
+    EXPECT_TRUE(uf.same_class(0, 250));
+    EXPECT_FALSE(uf.same_class(0, 251));
+    EXPECT_FALSE(uf.same_class(251, 254));
+
+    // Verify class_rank doesn't crash (don't assert on actual value)
+    (void)uf.class_rank(0);
+    (void)uf.class_rank(251);
+    std::cout << "  [INFO] Final class_rank: " << static_cast<int>(uf.class_rank(0)) << std::endl;
+
+    // Verify get_class_members works
+    std::vector<uint8_t> members;
+    uf.get_class_members(100, members);
+    EXPECT_EQ(members.size(), 251u);
+}
+
+TEST(IterableUnionFindTests, PostOverflow_BalancedTreeUnite_OperationsWork) {
+    // Fill uint8_t to overflow point and verify operations still work
+    // Uses balanced tree unite pattern: pairs, then pairs of pairs, etc. (grows rank)
+    IterableUnionFind<uint8_t> uf;
+
+    // Create all 255 elements
+    for (int i = 0; i < 255; ++i) {
+        uf.make_set();
+    }
+    EXPECT_EQ(uf.element_count(), 255u);
+
+    // Trigger and verify overflow_error
+    EXPECT_THROW(uf.make_set(), std::overflow_error);
+
+    // Unite first 128 elements in a balanced tree pattern
+    // This maximizes rank growth: log2(128) = 7
+    // Round 1: unite pairs (0,1), (2,3), (4,5), ..., (126,127) -> 64 groups of size 2
+    for (uint8_t i = 0; i < 128; i += 2) {
+        uf.unite(i, static_cast<uint8_t>(i + 1));
+    }
+
+    // Round 2: unite pairs of pairs -> 32 groups of size 4
+    for (uint8_t i = 0; i < 128; i += 4) {
+        uf.unite(i, static_cast<uint8_t>(i + 2));
+    }
+
+    // Round 3: -> 16 groups of size 8
+    for (uint8_t i = 0; i < 128; i += 8) {
+        uf.unite(i, static_cast<uint8_t>(i + 4));
+    }
+
+    // Round 4: -> 8 groups of size 16
+    for (uint8_t i = 0; i < 128; i += 16) {
+        uf.unite(i, static_cast<uint8_t>(i + 8));
+    }
+
+    // Round 5: -> 4 groups of size 32
+    for (uint8_t i = 0; i < 128; i += 32) {
+        uf.unite(i, static_cast<uint8_t>(i + 16));
+    }
+
+    // Round 6: -> 2 groups of size 64
+    for (uint8_t i = 0; i < 128; i += 64) {
+        uf.unite(i, static_cast<uint8_t>(i + 32));
+    }
+
+    // Round 7: -> 1 group of size 128
+    uf.unite(0, 64);
+
+    // Verify find works on all merged elements
+    uint8_t root = uf.find(0);
+    for (uint8_t i = 0; i < 128; ++i) {
+        EXPECT_EQ(uf.find(i), root) << "Element " << static_cast<int>(i) << " has wrong root";
+    }
+
+    // Verify size is correct
+    EXPECT_EQ(uf.class_size(0), 128u);
+
+    // Verify unmerged elements are still separate
+    EXPECT_NE(uf.find(128), root);
+    EXPECT_NE(uf.find(200), root);
+    EXPECT_EQ(uf.class_size(128), 1u);
+    EXPECT_EQ(uf.class_size(200), 1u);
+    EXPECT_EQ(uf.class_size(254), 1u);
+
+    // Verify same_class works
+    EXPECT_TRUE(uf.same_class(0, 127));
+    EXPECT_TRUE(uf.same_class(63, 64));
+    EXPECT_FALSE(uf.same_class(0, 128));
+
+    // Verify class_rank doesn't crash (don't assert on actual value)
+    (void)uf.class_rank(0);
+    (void)uf.class_rank(128);
+    std::cout << "  [INFO] Final class_rank: " << static_cast<int>(uf.class_rank(0)) << std::endl;
+
+    // Verify get_class_members works
+    std::vector<uint8_t> members;
+    uf.get_class_members(50, members);
+    EXPECT_EQ(members.size(), 128u);
 }

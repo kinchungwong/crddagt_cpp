@@ -115,6 +115,12 @@ Idx IterableUnionFind<Idx>::class_size(Idx x) const
 }
 
 template <typename Idx>
+Idx IterableUnionFind<Idx>::class_rank(Idx x) const
+{
+    return m_nodes[class_root(x)].rank;
+}
+
+template <typename Idx>
 Idx IterableUnionFind<Idx>::class_root(Idx x) const
 {
     validate_index(x);

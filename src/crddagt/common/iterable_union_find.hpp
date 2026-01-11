@@ -22,7 +22,7 @@ namespace crddagt {
  * - **Circular linked list**: Enables O(class_size) enumeration of class members
  *
  * @tparam Idx The index type, defaults to size_t. Must be unsigned.
- *             Supports uint16_t, uint32_t, uint64_t, or size_t.
+ *         Supports uint16_t, uint32_t, uint64_t, or size_t.
  *
  * @par Thread Safety
  * Externally synchronized. No internal synchronization. Caller must ensure:
@@ -138,6 +138,19 @@ public:
      * @throw std::runtime_error if x is out of range
      */
     [[nodiscard]] Idx class_size(Idx x) const;
+
+    /**
+     * @brief Returns the rank of the tree containing x.
+     *
+     * The rank is an upper bound on tree height, used for union-by-rank.
+     * This is primarily for testing and debugging; the actual value is
+     * an implementation detail and should not be relied upon.
+     *
+     * @param x An element in the class
+     * @return The rank of the tree (stored at the root)
+     * @throw std::runtime_error if x is out of range
+     */
+    [[nodiscard]] Idx class_rank(Idx x) const;
 
     /**
      * @brief Finds the root of the set containing x, without path compression.
