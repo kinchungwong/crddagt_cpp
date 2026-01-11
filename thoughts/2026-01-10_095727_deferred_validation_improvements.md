@@ -1,173 +1,78 @@
-# 2026-01-10_095727_deferred_validation_improvements.md
+# Deferred Validation Improvements
 
-- Author: Claude Opus 4.5 (Anthropic)
-- Date: 2026-01-10 (America/Los_Angeles)
-- Document status: Active
-- Document type: Research / Planning
+- **Status**: Frozen (implementation complete)
+- **Author**: Claude Opus 4.5 (Anthropic)
+- **Created**: 2026-01-10 (America/Los_Angeles)
+- **Last Updated**: 2026-01-11
 
-## See Also
+---
 
-- [2026-01-10_065043_diagnostic_revamp_mikado_plan.md](2026-01-10_065043_diagnostic_revamp_mikado_plan.md) - Recently completed diagnostic revamp
-- [2026-01-08_180853_eager_cycle_detection_research.md](2026-01-08_180853_eager_cycle_detection_research.md) - Eager cycle detection (Phases 1-6 complete)
-- [2026-01-08_094948_graph_core_design.md](2026-01-08_094948_graph_core_design.md) - Main GraphCore design document
+## Quick Reference
 
-## Context
+| Question | Answer |
+|----------|--------|
+| **What is this?** | Design and implementation for improving `GraphCore::get_diagnostics()` for graph in deferred validation mode |
+| **What was done?** | Precise cycle reporting (Tarjan's SCC), implicit link blame with trust levels |
+| **Is it complete?** | Yes (Phases 1-4). Phase 5 (deduplication) deferred as optional optimization. |
+| **Key commit** | `997f73d` - Tarjan's algorithm for precise cycle detection |
+| **Test file** | `tests/common/graph_core_diagnostics_tests.cpp` (55 tests) |
 
-The recent work on GraphCore focused intensely on **eager validation mode**:
+### When to Read This Document
+
+- **You're debugging cycle detection** → Read "Code Analysis Findings" section
+- **You're extending diagnostics** → Read "Detailed Design" section (D1, D2, D3)
+- **You're reviewing test coverage** → Skip to "Test Case Inventory" at the end
+- **You want the executive summary** → Read just this section and "Phase Status"
+
+### Phase Status
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Iterative Tarjan's SCC helper | ✅ Complete |
+| 2 | Integrate Tarjan into cycle reporting | ✅ Complete |
+| 3 | Track implicit link trust levels | ✅ Complete |
+| 4 | Blame implicit links | ✅ Complete |
+| 5 | Deduplication (optional) | ⏸️ Deferred |
+
+### Key Outcomes
+
+- `get_diagnostics()` now uses Tarjan's SCC to identify cycle members precisely (not downstream steps)
+- Implicit step links track trust levels derived from causing field links
+- `blamed_field_links` is populated for implicit-only cycles (was previously empty)
+- 289 total project tests passing (55 diagnostic tests)
+
+---
+
+## Related Documents
+
+- [2026-01-10_065043_diagnostic_revamp_mikado_plan.md](2026-01-10_065043_diagnostic_revamp_mikado_plan.md) - Diagnostic revamp (prerequisite)
+- [2026-01-08_180853_eager_cycle_detection_research.md](2026-01-08_180853_eager_cycle_detection_research.md) - Eager cycle detection
+- [2026-01-08_094948_graph_core_design.md](2026-01-08_094948_graph_core_design.md) - Main GraphCore design
+
+---
+
+## Background
+
+The recent work on GraphCore focused on **eager validation mode**:
 - Eager cycle detection in `link_fields()` and `link_steps()`
 - Immediate `MultipleCreate`, `MultipleDestroy`, `UnsafeSelfAliasing` throws
 - Union-find with `IterableUnionFind` for efficient equivalence class operations
 
-The **deferred validation mode** (`get_diagnostics()`) has received less attention and may have quality gaps. Two specific improvement opportunities have been identified:
+The **deferred validation mode** (`get_diagnostics()`) had quality gaps. Two improvement opportunities were identified:
 
-1. **Dependency Deduplication**: Potential redundancy in implicit, explicit, and combined dependencies
-2. **Cycle Reporting Precision**: Kahn's algorithm may report downstream tasks, not just cycle participants
-
----
-
-## Issue 1: Dependency Deduplication
-
-### Current State
-
-The current implementation maintains three sets of step dependencies:
-
-| Set | Source | Storage |
-|-----|--------|---------|
-| Explicit step links | `link_steps()` | `m_explicit_step_links`, `m_explicit_step_link_trust` |
-| Implicit step links | Derived from field usages during `get_diagnostics()` | Computed on-demand |
-| Combined links | Union of explicit + implicit | Computed on-demand in Kahn's algorithm |
-
-### Potential Issues
-
-1. **Duplicates across sets**: An explicit link A→B may also be implied by field usages. The combined set may contain duplicates.
-
-2. **Trust level conflicts**: If A→B exists as both explicit (TrustLevel::High) and implicit (no trust level), which trust level applies for blame analysis?
-
-3. **Memory/performance**: Redundant edges increase memory usage and iteration time in cycle detection.
-
-### Questions to Investigate
-
-- **Q1.1**: Does the current implementation deduplicate when building combined links?
-- **Q1.2**: How are trust levels handled for edges that appear in both explicit and implicit sets?
-- **Q1.3**: What are the performance implications of potential duplicates?
-- **Q1.4**: Could deduplication introduce subtle bugs (e.g., losing blame information)?
-
-### Deduplication Strategies
-
-| Strategy | Pros | Cons |
-|----------|------|------|
-| **A: Dedupe at combine time** | Simple, no storage changes | Must still store duplicates until combine |
-| **B: Prevent implicit if explicit exists** | Early deduplication | Requires checking explicit set during implicit derivation |
-| **C: Store combined set incrementally** | Single source of truth | More complex invariants during construction |
+1. **Cycle Reporting Precision**: Kahn's algorithm reported downstream tasks, not just cycle participants
+2. **Implicit Link Blame**: Implicit-only cycles had empty blame lists
 
 ---
 
-## Issue 2: Kahn's Algorithm Cycle Reporting
+## Severity Assessment
 
-### Current Behavior
-
-The current cycle detection in `get_diagnostics()` uses Kahn's algorithm:
-
-```
-1. Build in-degree map for all steps
-2. Initialize queue with steps having in-degree 0
-3. Process queue, decrementing in-degrees
-4. Steps remaining with in-degree > 0 are "involved" in the cycle
-```
-
-### The Problem
-
-Kahn's algorithm identifies all steps that **cannot be reached** due to the cycle, not just the steps **in** the cycle.
-
-**Example**:
-```
-A → B → C → D
-    ↑       ↓
-    └───────┘
-```
-
-- Actual cycle: B → C → D → B
-- Kahn's algorithm reports: B, C, D (and A if it has no other path)
-- If there are many downstream consumers of D, they are all reported
-
-**Result**: The `involved_steps` list can be huge, making it difficult to identify the actual cycle edges.
-
-### Current Trust-Based Blame
-
-The diagnostic system has `blamed_step_links` ordered by trust level. However:
-
-1. **All links in the "remaining" subgraph are blamed**, not just cycle edges
-2. **Low trust doesn't help** if the cycle is entirely high-trust links
-3. **No distinction** between cycle edges and downstream edges
-
-### Improvement Approaches
-
-| Approach | Description | Complexity |
-|----------|-------------|------------|
-| **A: Tarjan's SCC** | Find strongly connected components; report only SCC members | O(V+E), well-understood |
-| **B: Johnson's algorithm** | Find all elementary cycles | O((V+E)(C+1)), C = number of cycles |
-| **C: Post-process Kahn** | After Kahn, run DFS to find actual back-edges | O(V+E) additional |
-| **D: Hybrid** | Use Kahn for detection, Tarjan for reporting | Two-phase, clear separation |
-
-### Recommended Approach: Hybrid (D)
-
-1. **Detection phase** (existing): Kahn's algorithm detects if a cycle exists
-2. **Reporting phase** (new): If cycle detected, run Tarjan's SCC on the remaining subgraph
-3. **Blame analysis**: Only edges within SCCs are blamed; edges to/from SCCs are secondary
-
-### Benefits
-
-- **Precise reporting**: Only actual cycle participants listed in `involved_steps`
-- **Actionable blame**: Lower-trust edges within SCCs blamed first
-- **Scalable**: Even with thousands of downstream steps, only cycle members reported
-
----
-
-## Relationship to Trust Level System
-
-Both issues relate to the trust level blame system:
-
-| Issue | Trust Level Impact |
-|-------|-------------------|
-| Deduplication | If explicit and implicit edges coexist, which trust level wins? |
-| Cycle reporting | Blame should focus on cycle edges, ordered by trust |
-
-### Trust Level Design Principles
-
-1. **Explicit links have explicit trust**: User specified it
-2. **Implicit links have derived trust**: Based on field link trust that caused them
-3. **Lower trust = more suspicious**: Blamed first in diagnostic output
-4. **Deduplication should preserve lowest trust**: If same edge has multiple trust levels, keep the lowest (most suspicious)
-
----
-
-## Proposed Investigation Plan
-
-### Phase A: Code Analysis
-
-1. Read current `get_diagnostics()` cycle detection code
-2. Document how combined links are built
-3. Identify if/where deduplication occurs
-4. Trace how `blamed_step_links` is populated
-
-### Phase B: Test Case Development
-
-1. Create test case with explicit + implicit duplicate edge
-2. Create test case with large downstream graph after cycle
-3. Verify current behavior matches expectations (or document gaps)
-
-### Phase C: Design Improvements
-
-1. Design deduplication strategy
-2. Design improved cycle reporting (likely Tarjan's SCC)
-3. Document trust level handling for deduplicated edges
-
-### Phase D: Implementation
-
-1. Implement deduplication (if needed)
-2. Implement precise cycle reporting
-3. Update tests
-4. Update documentation
+| Issue | Severity | Resolution |
+|-------|----------|------------|
+| Downstream steps reported in cycles | **High** | ✅ Fixed (Tarjan's SCC) |
+| Only explicit links blamed | **High** | ✅ Fixed (implicit blame) |
+| No implicit trust level | **Medium** | ✅ Fixed (derived from field links) |
+| No deduplication | **Low** | ⏸️ Deferred (performance only) |
 
 ---
 
@@ -194,18 +99,9 @@ for (StepIdx cs : create_steps)
 }
 ```
 
-**Analysis**: If explicit link A→B exists and implicit A→B is also added:
-- `in_degree[B]` is incremented twice (2 instead of 1)
-- `successors[A]` contains [B, B]
-- When processing A, we decrement `in_degree[B]` twice (2→1→0)
-- Step B is pushed to ready when in_degree reaches 0
+**Analysis**: Kahn's algorithm is still correct because in-degree increments and decrements match. However, there's memory waste and extra iterations.
 
-**Kahn's algorithm is still correct** because the in-degree and decrement counts match. However:
-- **Memory waste**: Duplicate edges stored
-- **Extra iterations**: Processing duplicate successors
-- **Conceptual concern**: The graph representation is denormalized
-
-### Finding 2: Downstream Steps Reported (CONFIRMED DESIGN GAP)
+### Finding 2: Downstream Steps Reported (FIXED)
 
 **Location**: `graph_core.cpp` lines 717-724
 
@@ -224,70 +120,19 @@ for (StepIdx s = 0; s < m_step_count; ++s)
 - Actual cycle: {B, C}
 - Kahn reports: {B, C, D, E} (all steps with in_degree > 0)
 
-**Impact**: Large downstream graphs produce huge `involved_steps` lists, making diagnosis difficult.
+**Fix**: Tarjan's SCC now identifies only actual cycle participants.
 
-### Finding 3: Only Explicit Links Blamed (CONFIRMED DESIGN GAP)
+### Finding 3: Only Explicit Links Blamed (FIXED)
 
 **Location**: `graph_core.cpp` lines 774-801 (`add_step_link_blame`)
 
-```cpp
-// Only searches m_explicit_step_links
-for (size_t i = 0; i < m_explicit_step_links.size(); ++i)
-{
-    const auto& [before, after] = m_explicit_step_links[i];
-    if (step_set.count(before) > 0 && step_set.count(after) > 0)
-    {
-        blamed_with_trust.emplace_back(i, m_explicit_step_link_trust[i]);
-    }
-}
-```
+The original code only searched `m_explicit_step_links`. Implicit-only cycles had empty blame.
 
-**Impact**: If a cycle is caused entirely by implicit links (field usage ordering), **no blame is assigned**. The `blamed_step_links` list will be empty.
+**Fix**: Implicit links now track causing field links; these are added to `blamed_field_links`.
 
-### Finding 4: Implicit Links Have No Trust Level
+### Finding 4: Implicit Links Have No Trust Level (FIXED)
 
-Implicit links are not stored—they are computed on-demand. There is no mechanism to assign or track trust levels for implicit edges.
-
-**Design question**: Should implicit link trust be:
-- Inherited from the field links that cause them?
-- A fixed default (e.g., `TrustLevel::High` since they're system-derived)?
-- Tracked separately?
-
----
-
-## Severity Assessment
-
-| Issue | Severity | Impact |
-|-------|----------|--------|
-| No deduplication | **Low** | Performance: extra memory and iterations (algorithm still correct) |
-| Downstream steps reported | **High** | Usability: huge output, impossible to diagnose large graphs |
-| Only explicit links blamed | **High** | Usability: implicit-only cycles have NO blame (empty list) |
-| No implicit trust level | **Medium** | Design gap: affects blame ordering for mixed cycles |
-
----
-
-## Open Questions
-
-### Q1: Is deduplication actually needed?
-
-**ANSWERED: NO (for correctness)**. The current code does not deduplicate, but Kahn's algorithm is still correct because the in-degree increments and decrements match. If edge A→B appears twice, `in_degree[B]` is incremented twice (to 2), and when processing A, we decrement twice (2→1→0). Step B is pushed to ready when in_degree reaches 0, which is correct.
-
-**However**, deduplication would improve:
-- Memory usage (fewer duplicate edges stored)
-- Iteration time (fewer successors to process)
-- Conceptual clarity (normalized graph representation)
-
-### Q2: What is the implicit edge trust level?
-
-**ANSWERED: None**. Implicit edges have no trust level. This is a design gap that should be addressed.
-
-### Q3: Should cycle reporting change be breaking?
-
-Current tests may expect the current (imprecise) behavior. Need to audit tests.
-
-### Q4: Performance considerations?
-
-Tarjan's SCC is O(V+E), same as Kahn's. The additional pass is acceptable.
+Implicit links are now assigned trust levels derived from the field links that cause them (minimum trust = most suspicious).
 
 ---
 
@@ -295,7 +140,7 @@ Tarjan's SCC is O(V+E), same as Kahn's. The additional pass is acceptable.
 
 ### Design D1: Precise Cycle Reporting with Tarjan's SCC
 
-**Goal**: Replace the current `in_degree > 0` step collection with Tarjan's SCC to report only actual cycle participants.
+**Goal**: Replace the `in_degree > 0` step collection with Tarjan's SCC.
 
 **Algorithm**:
 
@@ -309,42 +154,13 @@ Tarjan's SCC is O(V+E), same as Kahn's. The additional pass is acceptable.
 5. Single-vertex SCCs are downstream dependencies, not cycle members
 ```
 
-**Implementation Approach**:
-
-Implement a simple iterative Tarjan's SCC directly in `graph_core.cpp` (no recursion, to avoid stack overflow on large graphs). The demo_002 implementation uses recursion, but for crddagt_cpp (minimal dependencies), we need a self-contained iterative version.
-
-**Data Structures**:
-
-```cpp
-struct TarjanState {
-    size_t index_counter = 0;
-    std::vector<size_t> index;       // Discovery index for each vertex
-    std::vector<size_t> lowlink;     // Lowest reachable index
-    std::vector<bool> on_stack;      // Whether vertex is on the stack
-    std::vector<StepIdx> stack;      // DFS stack
-    std::vector<std::vector<StepIdx>> sccs;  // Result: list of SCCs
-};
-```
-
-**Expected Output Change**:
-
-Before (current):
-```
-involved_steps: [B, C, D, E, F, G]  // Includes downstream steps
-```
-
-After (improved):
-```
-involved_steps: [B, C, D]  // Only actual cycle members
-```
+**Implementation**: Iterative Tarjan's SCC in anonymous namespace (no recursion for stack safety).
 
 ### Design D2: Implicit Link Blame with Derived Trust Levels
 
-**Goal**: Blame implicit links (not just explicit) when they participate in cycles.
+**Goal**: Blame implicit links when they participate in cycles.
 
 **Trust Level Derivation**:
-
-Implicit step links are derived from field usages. The trust level should be inherited from the field links that caused the implicit dependency.
 
 ```
 Implicit step link A→B caused by:
@@ -352,123 +168,194 @@ Implicit step link A→B caused by:
   - Trust level = m_field_link_trust[link connecting f1↔f2]
 ```
 
-**Challenge**: A single implicit step link may be caused by multiple field links (e.g., multiple Creates reading the same data). In this case, use the **lowest** (most suspicious) trust level.
+If multiple field links cause the same implicit step link, use the **lowest** (most suspicious) trust level.
 
-**Implementation**:
+**Blame Output**: When blaming an implicit step link, add its `causing_field_links` to `blamed_field_links`.
 
-```cpp
-struct ImplicitStepLink {
-    StepIdx before;
-    StepIdx after;
-    TrustLevel trust;
-    std::vector<size_t> causing_field_links;  // For blame tracing
-};
-```
+### Design D3: Deduplication Strategy (DEFERRED)
 
-Build `implicit_step_links` during the existing implicit link generation loop, tracking which field links caused each implicit step link.
+**Goal**: Eliminate duplicate edges for performance.
 
-**Blame Output**:
+**Implementation**: Use `unordered_set` to track existing edges during combined link building. Explicit links take priority for trust level.
 
-```cpp
-struct DiagnosticItem {
-    // Existing:
-    std::vector<size_t> blamed_step_links;    // Indices into explicit step links
-    std::vector<size_t> blamed_field_links;   // Indices into field links
-
-    // New (option A): Expand to include implicit links
-    std::vector<ImplicitStepLink> blamed_implicit_step_links;
-
-    // New (option B): Include causing field links in blamed_field_links
-    // (implicit step links don't need separate storage - just blame their field causes)
-};
-```
-
-**Recommendation**: Option B is simpler. When blaming an implicit step link, add its `causing_field_links` to `blamed_field_links`. The user can trace from field links back to the implicit ordering.
-
-### Design D3: Deduplication Strategy
-
-**Goal**: Avoid duplicate edges in combined_links for performance and clarity.
-
-**Implementation**: Use an `unordered_set` to track existing edges:
-
-```cpp
-std::unordered_set<std::pair<StepIdx, StepIdx>, PairHash> edge_set;
-
-// Add explicit links (first)
-for (const auto& link : m_explicit_step_links) {
-    edge_set.insert(link);
-    combined_links.push_back(link);
-}
-
-// Add implicit links (skip if already exists)
-for (StepIdx cs : create_steps) {
-    for (StepIdx rs : read_steps) {
-        if (cs != rs) {
-            auto edge = std::make_pair(cs, rs);
-            if (edge_set.insert(edge).second) {  // Returns false if already existed
-                combined_links.push_back(edge);
-            }
-        }
-    }
-}
-```
-
-**Note**: This design choice means explicit links "win" over implicit links for trust level purposes. If A→B exists explicitly (TrustLevel::Low) and would also be implicit (from field usages), the explicit trust level is used for blame.
+**Status**: Not implemented. Performance impact is minor; algorithm correctness is unaffected.
 
 ---
 
 ## Implementation Plan (Mikado Style)
 
-### Phase 1: Add Iterative Tarjan's SCC Helper
+### Phase 1: Add Iterative Tarjan's SCC Helper ✅
 
-**Goal**: Implement `find_strongly_connected_components()` helper function.
+Implement `find_strongly_connected_components()` helper function.
 
-**Input**: Vertex count, edge list
-**Output**: List of SCCs (each SCC is a list of vertex indices)
+### Phase 2: Integrate Tarjan into Cycle Reporting ✅
 
-**Test**: Unit tests for Tarjan's SCC in isolation (new test file or section).
+Replace `in_degree > 0` collection with Tarjan's SCC. Only actual cycle participants reported.
 
-### Phase 2: Integrate Tarjan into Cycle Reporting
+### Phase 3: Track Implicit Link Trust Levels ✅
 
-**Goal**: Replace `in_degree > 0` collection with Tarjan's SCC.
+During implicit link generation, track causing field links. Compute trust as minimum of causing field link trust levels.
 
-**Changes to `get_diagnostics()`**:
-1. After Kahn detects cycle, extract remaining subgraph
-2. Run Tarjan's SCC
-3. Filter to SCCs with size > 1
-4. Populate `involved_steps` with union of non-trivial SCCs
+### Phase 4: Blame Implicit Links ✅
 
-**Test**: Update existing cycle tests to verify precise reporting.
+Search both explicit and implicit links. Add implicit link's causing field links to `blamed_field_links`.
 
-### Phase 3: Track Implicit Link Trust Levels
+### Phase 5: Deduplication ⏸️
 
-**Goal**: Derive trust levels for implicit step links.
+Optional performance optimization. Deferred.
 
-**Changes**:
-1. During implicit link generation, track causing field links
-2. Compute trust level as minimum of causing field link trust levels
-3. Store in new `ImplicitStepLink` structure (or inline)
+---
 
-**Test**: New tests for implicit link trust derivation.
+## Issue Details (Historical)
 
-### Phase 4: Blame Implicit Links
+### Issue 1: Dependency Deduplication
 
-**Goal**: Include implicit links in cycle blame.
+The implementation maintains three sets of step dependencies:
 
-**Changes to `add_step_link_blame()`**:
-1. Search both explicit and implicit links
-2. Add implicit link's causing field links to `blamed_field_links`
-3. Maintain trust-level ordering
+| Set | Source | Storage |
+|-----|--------|---------|
+| Explicit step links | `link_steps()` | `m_explicit_step_links`, `m_explicit_step_link_trust` |
+| Implicit step links | Derived from field usages | Computed on-demand |
+| Combined links | Union of explicit + implicit | Computed on-demand in Kahn's algorithm |
 
-**Test**: Tests for implicit-only cycles having non-empty blame.
+**Potential issues identified**:
+1. Duplicates across sets (explicit A→B may also be implicit)
+2. Trust level conflicts for duplicate edges
+3. Memory/performance overhead
 
-### Phase 5: Deduplication (Optional)
+**Resolution**: Deferred as low-priority performance optimization.
 
-**Goal**: Eliminate duplicate edges for performance.
+### Issue 2: Kahn's Algorithm Cycle Reporting
 
-**Changes**: Add `unordered_set` check during combined link building.
+Kahn's algorithm identifies all steps that **cannot be reached** due to the cycle, not just the steps **in** the cycle.
 
-**Test**: Performance test with large graphs (optional).
+**Improvement approaches considered**:
+
+| Approach | Description | Complexity |
+|----------|-------------|------------|
+| **A: Tarjan's SCC** | Find strongly connected components | O(V+E) |
+| **B: Johnson's algorithm** | Find all elementary cycles | O((V+E)(C+1)) |
+| **C: Post-process Kahn** | DFS to find back-edges | O(V+E) additional |
+| **D: Hybrid** | Kahn for detection, Tarjan for reporting | Two-phase |
+
+**Chosen**: Hybrid (D) - Kahn detects, Tarjan reports precisely.
+
+---
+
+## Open Questions (Resolved)
+
+### Q1: Is deduplication needed for correctness?
+
+**ANSWERED: NO**. Kahn's algorithm is correct with duplicates. Deduplication is performance only.
+
+### Q2: What is the implicit edge trust level?
+
+**ANSWERED**: Derived from causing field links (minimum trust).
+
+### Q3: Should cycle reporting change be breaking?
+
+**ANSWERED**: Tests updated. More precise reporting is strictly better.
+
+### Q4: Performance considerations?
+
+**ANSWERED**: Tarjan's SCC is O(V+E), acceptable.
+
+---
+
+## Test Case Inventory
+
+**File**: `tests/common/graph_core_diagnostics_tests.cpp`
+**Total**: 55 tests in `GraphCoreDiagnosticsTests` suite
+
+### Cycle Detection Tests (17 tests)
+
+| Test Name | Description |
+|-----------|-------------|
+| `Cycle_SelfLoopExplicitStepLink` | Step linked to itself via link_steps() |
+| `Cycle_TwoStepExplicitCycle_Eager` | A→B→A via explicit step links (eager mode) |
+| `Cycle_TwoStepExplicitCycle_NonEager` | A→B→A via explicit step links (deferred mode) |
+| `Cycle_ThreeStepExplicitCycle_Eager` | A→B→C→A via explicit step links (eager mode) |
+| `Cycle_ThreeStepExplicitCycle_NonEager` | A→B→C→A via explicit step links (deferred mode) |
+| `Cycle_ValidDAG_Eager` | Linear chain has no cycle (eager mode) |
+| `Cycle_LongerCycle_Eager` | 4-step cycle (eager mode) |
+| `Cycle_ImplicitFromUsageOrdering_NonEager` | Cycle from field usage ordering |
+| `Cycle_ImplicitFromUsageOrdering_Eager` | Cycle from field usage ordering (eager mode) |
+| `Cycle_ImplicitOnly_BlameNonEmpty_NonEager` | Implicit-only cycles have non-empty blame |
+| `Cycle_MixedExplicitAndImplicit_NonEager` | Explicit + implicit edges forming cycle |
+| `Cycle_MixedExplicitAndImplicit_Eager` | Explicit + implicit edges (eager mode) |
+| `Cycle_NoCycleInValidDAG` | Valid DAG produces no cycle errors |
+| `Cycle_ValidFieldLinks_Eager` | Valid field links don't cause false positives |
+| `Cycle_BlameOrdersByTrustLevel_NonEager` | Lower trust links blamed first |
+| `Cycle_PreciseReporting_ExcludesDownstream_NonEager` | Only cycle members reported, not downstream |
+| `Cycle_PreciseReporting_MultipleDisjointCycles_NonEager` | Multiple SCCs correctly identified |
+
+### Usage Constraint Tests (17 tests)
+
+| Test Name | Description |
+|-----------|-------------|
+| `UsageConstraint_DoubleCreate_Eager` | Two Creates for same data (eager) |
+| `UsageConstraint_DoubleCreate_NonEager` | Two Creates for same data (deferred) |
+| `UsageConstraint_DoubleDestroy_Eager` | Two Destroys for same data (eager) |
+| `UsageConstraint_DoubleDestroy_NonEager` | Two Destroys for same data (deferred) |
+| `UsageConstraint_SelfAliasCreateAndRead_Eager` | Same step has Create and Read (eager) |
+| `UsageConstraint_SelfAliasCreateAndRead_NonEager` | Same step has Create and Read (deferred) |
+| `UsageConstraint_SelfAliasCreateAndDestroy_Eager` | Same step has Create and Destroy (eager) |
+| `UsageConstraint_SelfAliasCreateAndDestroy_NonEager` | Same step has Create and Destroy (deferred) |
+| `UsageConstraint_SelfAliasReadAndDestroy_NonEager` | Same step has Read and Destroy |
+| `UsageConstraint_SelfAliasDoubleReadAllowed` | Multiple Reads allowed (no error) |
+| `UsageConstraint_TransitiveDoubleCreate_Eager` | Transitive link connects two Creates (eager) |
+| `UsageConstraint_TransitiveDoubleCreate_NonEager` | Transitive link connects two Creates (deferred) |
+| `UsageConstraint_ValidCreateOnly` | Single Create - no error |
+| `UsageConstraint_ValidCreateAndReads` | Create + Reads - no error |
+| `UsageConstraint_ValidCreateReadsDestroy` | Full lifecycle - no error |
+| `UsageConstraint_ValidCreateAndDestroy` | Create + Destroy (no Reads) - no error |
+| `UsageConstraint_BlameOrdersByTrustLevel_NonEager` | Lower trust field links blamed first |
+
+### Missing Create Tests (5 tests)
+
+| Test Name | Description |
+|-----------|-------------|
+| `MissingCreate_Sealed_IsError` | Missing Create in sealed graph is error |
+| `MissingCreate_Unsealed_IsWarning` | Missing Create in unsealed graph is warning |
+| `MissingCreate_Eager_NotThrownDuringLinkFields` | Missing Create not checked eagerly |
+| `MissingCreate_SingletonRead_Sealed` | Singleton Read with no Create |
+| `MissingCreate_SingletonDestroy_Sealed` | Singleton Destroy with no Create |
+
+### Orphan Step Tests (4 tests)
+
+| Test Name | Description |
+|-----------|-------------|
+| `OrphanStep_NoFieldsNoLinks` | Step with no fields and no links → warning |
+| `OrphanStep_HasFieldsNoLinks` | Step has fields → no warning |
+| `OrphanStep_NoFieldsHasLinks` | Step has links → no warning |
+| `OrphanStep_HasBoth` | Step has both → no warning |
+
+### Unused Data Tests (3 tests)
+
+| Test Name | Description |
+|-----------|-------------|
+| `UnusedData_SingletonCreate` | Create with no consumers |
+| `UnusedData_LinkedCreateAndRead` | Create linked to Read - no warning |
+| `UnusedData_FullLifecycle` | Full lifecycle - no warning |
+
+### Diagnostics API Tests (5 tests)
+
+| Test Name | Description |
+|-----------|-------------|
+| `API_EmptyGraphNoErrors` | Empty graph: is_valid() = true |
+| `API_EmptyGraphNoWarnings` | Empty graph: has_warnings() = false |
+| `API_ErrorMakesInvalid_NonEager` | Error makes is_valid() = false |
+| `API_WarningStillValid` | Warning only: is_valid() = true |
+| `API_AllItemsErrorsFirst_NonEager` | all_items() returns errors before warnings |
+
+### Edge Case Tests (4 tests)
+
+| Test Name | Description |
+|-----------|-------------|
+| `EdgeCase_EmptyGraph` | No steps, no fields → no diagnostics |
+| `EdgeCase_SingleStepNoFields` | One step, no fields → orphan warning |
+| `EdgeCase_SingleStepSingleField` | One step, one field → unused data warning |
+| `EdgeCase_MultipleIndependentDataFlows` | Multiple independent flows validated |
 
 ---
 
@@ -477,34 +364,9 @@ for (StepIdx cs : create_steps) {
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-01-10 | Claude Opus 4.5 | Initial document capturing improvement opportunities |
-| 2026-01-10 | Claude Opus 4.5 | Code analysis complete: confirmed 4 issues (performance + 3 design gaps) |
-| 2026-01-10 | Claude Opus 4.5 | Corrected Q1: deduplication is NOT a correctness bug, only performance |
-| 2026-01-10 | Claude Opus 4.5 | Added detailed design: D1 (Tarjan's SCC), D2 (implicit blame), D3 (deduplication) |
+| 2026-01-10 | Claude Opus 4.5 | Code analysis complete: confirmed 4 issues |
+| 2026-01-10 | Claude Opus 4.5 | Corrected Q1: deduplication is NOT a correctness bug |
+| 2026-01-10 | Claude Opus 4.5 | Added detailed design: D1, D2, D3 |
 | 2026-01-10 | Claude Opus 4.5 | Added 5-phase Mikado-style implementation plan |
-| 2026-01-10 | Claude Opus 4.5 | **Phases 1-4 complete**: Tarjan's SCC, implicit link blame, precise cycle reporting. 254 tests passing. |
-
----
-
-## Implementation Summary
-
-### Completed (Phases 1-4)
-
-1. **Phase 1**: Implemented iterative Tarjan's SCC algorithm in `graph_core.cpp` (anonymous namespace helper)
-2. **Phase 2**: Integrated Tarjan's SCC into cycle reporting - only actual cycle participants are now reported
-3. **Phase 3**: Added trust level tracking for implicit step links (derived from field link trust levels)
-4. **Phase 4**: Modified blame analysis to include implicit links - their causing field links are now blamed
-
-### Key Changes
-
-- `get_diagnostics()` now uses Tarjan's SCC to identify cycle members precisely
-- Implicit step links now track trust levels and causing field links
-- `blamed_field_links` is populated for implicit-only cycles (was previously empty)
-- Added 3 new tests: `Cycle_PreciseReporting_ExcludesDownstream`, `Cycle_PreciseReporting_MultipleDisjointCycles`, `Cycle_ImplicitOnly_BlameNonEmpty`
-
-### Deferred (Phase 5)
-
-Deduplication is optional since it's a performance optimization, not a correctness fix. The current implementation is correct but may have duplicate edges in combined_links.
-
----
-
-*This document is Active but substantially complete. Phase 5 (deduplication) may be implemented in a future session.*
+| 2026-01-10 | Claude Opus 4.5 | Phases 1-4 complete. 254 tests passing. |
+| 2026-01-11 | Claude Opus 4.5 | Document frozen. Reorganized (inverted pyramid). Fixed test counts. 289 tests. |
