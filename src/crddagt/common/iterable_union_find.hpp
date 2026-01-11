@@ -4,6 +4,7 @@
 #include "crddagt/common/iterable_union_find.fwd.hpp"
 
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -21,6 +22,7 @@ namespace crddagt {
  * - **Circular linked list**: Enables O(class_size) enumeration of class members
  *
  * @tparam Idx The index type, defaults to size_t. Must be unsigned.
+ *             Supports uint16_t, uint32_t, uint64_t, or size_t.
  *
  * @par Thread Safety
  * Externally synchronized. No internal synchronization. Caller must ensure:
@@ -30,6 +32,10 @@ namespace crddagt {
  * @par Index Validation
  * All operations validate indices and throw std::runtime_error with a descriptive
  * message if an index is out of range. This prevents undefined behavior.
+ *
+ * @par Capacity
+ * The maximum number of elements is limited by std::numeric_limits<Idx>::max().
+ * make_set() throws std::overflow_error if this limit would be exceeded.
  *
  * @par Include Usage
  * - Include `iterable_union_find.hpp` for class definition (e.g., in headers with member variables)
@@ -44,6 +50,18 @@ class IterableUnionFind {
 public:
     static_assert(std::is_unsigned_v<Idx>,
                   "IterableUnionFind: Idx must be an unsigned type");
+
+    /**
+     * @brief Per-element node storing union-find metadata.
+     *
+     * All fields use the same Idx type for uniformity and cache efficiency.
+     */
+    struct Node {
+        Idx parent;  ///< Parent pointer (self if root)
+        Idx rank;    ///< Tree rank for union-by-rank (bounded by log2(n))
+        Idx size;    ///< Class size (valid only at root, 0 elsewhere)
+        Idx next;    ///< Next element in circular linked list
+    };
 
     // =========================================================================
     // Construction
@@ -64,6 +82,7 @@ public:
      * Indices are assigned sequentially starting from 0.
      *
      * @return The index of the newly created element
+     * @throw std::overflow_error if adding another element would overflow Idx
      */
     Idx make_set();
 
@@ -118,7 +137,7 @@ public:
      * @return The number of elements in the class containing x
      * @throw std::runtime_error if x is out of range
      */
-    [[nodiscard]] size_t class_size(Idx x) const;
+    [[nodiscard]] Idx class_size(Idx x) const;
 
     /**
      * @brief Finds the root of the set containing x, without path compression.
@@ -163,10 +182,7 @@ private:
      */
     void validate_index(Idx x) const;
 
-    std::vector<Idx> m_parent;    ///< Parent pointer (root if m_parent[x] == x)
-    std::vector<size_t> m_rank;   ///< Tree rank for union-by-rank
-    std::vector<size_t> m_size;   ///< Class size (valid only at root, 0 elsewhere)
-    std::vector<Idx> m_next;      ///< Circular linked list for iteration
+    std::vector<Node> m_nodes;  ///< Per-element union-find metadata
 };
 
 } // namespace crddagt

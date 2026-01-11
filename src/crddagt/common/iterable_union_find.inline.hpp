@@ -12,18 +12,27 @@ namespace crddagt {
 template <typename Idx>
 Idx IterableUnionFind<Idx>::make_set()
 {
-    Idx x = static_cast<Idx>(m_parent.size());
-    m_parent.push_back(x);      // Self-parent (is own root)
-    m_rank.push_back(0);        // Initial rank 0
-    m_size.push_back(1);        // Singleton has size 1
-    m_next.push_back(x);        // Self-loop (singleton circular list)
+    // Overflow check: ensure the new index fits in Idx
+    if (m_nodes.size() >= static_cast<size_t>(std::numeric_limits<Idx>::max())) {
+        throw std::overflow_error(
+            "IterableUnionFind: cannot create more than " +
+            std::to_string(std::numeric_limits<Idx>::max()) + " elements");
+    }
+
+    Idx x = static_cast<Idx>(m_nodes.size());
+    m_nodes.push_back(Node{
+        x,      // parent: self (is own root)
+        0,      // rank: initial 0
+        1,      // size: singleton has size 1
+        x       // next: self-loop (singleton circular list)
+    });
     return x;
 }
 
 template <typename Idx>
 size_t IterableUnionFind<Idx>::element_count() const noexcept
 {
-    return m_parent.size();
+    return m_nodes.size();
 }
 
 // =============================================================================
@@ -37,14 +46,14 @@ Idx IterableUnionFind<Idx>::find(Idx x)
 
     // Pass 1: Find root
     Idx root = x;
-    while (m_parent[root] != root) {
-        root = m_parent[root];
+    while (m_nodes[root].parent != root) {
+        root = m_nodes[root].parent;
     }
 
     // Pass 2: Path compression - rewrite parents to point to root
-    while (m_parent[x] != root) {
-        Idx next = m_parent[x];
-        m_parent[x] = root;
+    while (m_nodes[x].parent != root) {
+        Idx next = m_nodes[x].parent;
+        m_nodes[x].parent = root;
         x = next;
     }
 
@@ -63,31 +72,34 @@ bool IterableUnionFind<Idx>::unite(Idx a, Idx b)
     }
 
     // Compute combined size before modifying
-    size_t combined_size = m_size[root_a] + m_size[root_b];
+    // Note: combined_size cannot overflow because total size <= element_count,
+    // and element_count is bounded by Idx::max (enforced by make_set).
+    Idx combined_size = m_nodes[root_a].size + m_nodes[root_b].size;
 
     // Union by rank
     Idx new_root, old_root;
-    if (m_rank[root_a] < m_rank[root_b]) {
-        m_parent[root_a] = root_b;
+    if (m_nodes[root_a].rank < m_nodes[root_b].rank) {
+        m_nodes[root_a].parent = root_b;
         new_root = root_b;
         old_root = root_a;
-    } else if (m_rank[root_a] > m_rank[root_b]) {
-        m_parent[root_b] = root_a;
+    } else if (m_nodes[root_a].rank > m_nodes[root_b].rank) {
+        m_nodes[root_b].parent = root_a;
         new_root = root_a;
         old_root = root_b;
     } else {
-        m_parent[root_b] = root_a;
-        m_rank[root_a]++;
+        m_nodes[root_b].parent = root_a;
+        // Rank increment is safe: rank <= log2(n) < sizeof(Idx)*8
+        ++m_nodes[root_a].rank;
         new_root = root_a;
         old_root = root_b;
     }
 
     // Update sizes
-    m_size[new_root] = combined_size;
-    m_size[old_root] = 0;
+    m_nodes[new_root].size = combined_size;
+    m_nodes[old_root].size = 0;
 
     // Splice circular lists at the roots for deterministic behavior
-    std::swap(m_next[root_a], m_next[root_b]);
+    std::swap(m_nodes[root_a].next, m_nodes[root_b].next);
 
     return true;
 }
@@ -97,17 +109,17 @@ bool IterableUnionFind<Idx>::unite(Idx a, Idx b)
 // =============================================================================
 
 template <typename Idx>
-size_t IterableUnionFind<Idx>::class_size(Idx x) const
+Idx IterableUnionFind<Idx>::class_size(Idx x) const
 {
-    return m_size[class_root(x)];
+    return m_nodes[class_root(x)].size;
 }
 
 template <typename Idx>
 Idx IterableUnionFind<Idx>::class_root(Idx x) const
 {
     validate_index(x);
-    while (m_parent[x] != x) {
-        x = m_parent[x];
+    while (m_nodes[x].parent != x) {
+        x = m_nodes[x].parent;
     }
     return x;
 }
@@ -120,7 +132,7 @@ void IterableUnionFind<Idx>::get_class_members(Idx x, std::vector<Idx>& out) con
     Idx current = x;
     do {
         out.push_back(current);
-        current = m_next[current];
+        current = m_nodes[current].next;
     } while (current != x);
 }
 
@@ -137,10 +149,10 @@ bool IterableUnionFind<Idx>::same_class(Idx a, Idx b) const
 template <typename Idx>
 void IterableUnionFind<Idx>::validate_index(Idx x) const
 {
-    if (static_cast<size_t>(x) >= m_parent.size()) {
+    if (static_cast<size_t>(x) >= m_nodes.size()) {
         throw std::runtime_error(
             "IterableUnionFind: index " + std::to_string(x) +
-            " out of range [0, " + std::to_string(m_parent.size()) + ")");
+            " out of range [0, " + std::to_string(m_nodes.size()) + ")");
     }
 }
 
