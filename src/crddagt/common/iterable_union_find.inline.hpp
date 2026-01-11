@@ -242,6 +242,7 @@ void IterableUnionFind<Idx>::get_classes(std::vector<std::vector<Idx>>& out_clas
     out_classes.clear();
     std::vector<Idx> roots;
     get_class_representatives(roots);
+    out_classes.reserve(roots.size());
     for (Idx root : roots) {
         out_classes.emplace_back();
         get_class_members(root, out_classes.back());
