@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.26 FATAL_ERROR)
 
 project(
     "crddagt_cpp"
-    DESCRIPTION "crddagt_cpp (currently part of the repo_20251205 monorepo pending a split)"
-    HOMEPAGE_URL "https://github.com/kinchungwong/repo_20251205"
+    DESCRIPTION "crddagt_cpp"
+    HOMEPAGE_URL "https://github.com/kinchungwong/crddagt_cpp"
     LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)

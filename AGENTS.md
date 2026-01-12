@@ -39,9 +39,13 @@ All C++ header files in this project are meant to be included via a top-level in
 - tests
     - crddagt
 
-## Git repository layout (relevant for Git-related or GitHub-related AI agent tasks)
+## Availability of monorepo tools depend on whether agents work in a standalone git clone
 
-Currently, `crddagt_cpp` is in early bootstrapping stage, and exists as a subproject folder in the monorepo "repo_20251205". In the future, it will be transferred to a GitHub repository of its own. The transition will necessitate significant CI/CD retooling. Do not prematurely optimize for this transition unless explicitly initiated by the human user.
+Agents may either with tools from the monorepo "repo_20251205", or without (standalone mode). The only tool that is commonly used from the monorepo is "workspace/build.sh", a convenience script to build the CMake-based C++ project, run unit tests, and generate Doxygen docs and other artifacts. The absence of "workspace/build.sh" is non-blocking; all commands can be run manually.
+
+When working in standalone mode, agents must not assume the existence of any other files or folders outside `crddagt_cpp/`.
+
+When detecting the presence of "workspace/build.sh", always qualify with the directory name, to avoid ambiguity with any other "build.sh" scripts that may exist on the sysyem.
 
 ## The thoughts folder
 
