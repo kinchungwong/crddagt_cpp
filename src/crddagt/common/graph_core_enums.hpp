@@ -90,4 +90,59 @@ enum class TrustLevel
     High
 };
 
+/**
+ * @brief Enumeration of step execution states.
+ *
+ * @details
+ * Steps progress through these states during execution. The state machine is:
+ *
+ * @verbatim
+ *   NotReady --> Ready --> Queued --> Executing --> Succeeded
+ *                                         |
+ *                                         +--> Failed
+ *                                         |
+ *                                         +--> Cancelled
+ * @endverbatim
+ *
+ * @par State descriptions
+ * - `NotReady`: Waiting for predecessors to complete.
+ * - `Ready`: All predecessors complete; eligible for queue.
+ * - `Queued`: In the ready queue, waiting for a worker.
+ * - `Executing`: Worker is running execute().
+ * - `Succeeded`: execute() completed normally.
+ * - `Failed`: execute() threw an exception.
+ * - `Cancelled`: Execution aborted before starting (due to stop request or predecessor failure).
+ *
+ * @par Terminal states
+ * `Succeeded`, `Failed`, and `Cancelled` are terminal; no further transitions occur.
+ */
+enum class StepState
+{
+    NotReady,
+    Ready,
+    Queued,
+    Executing,
+    Succeeded,
+    Failed,
+    Cancelled
+};
+
+/**
+ * @brief Convert StepState to string for debugging/logging.
+ */
+inline const char* to_string(StepState state) noexcept
+{
+    switch (state)
+    {
+        case StepState::NotReady:   return "NotReady";
+        case StepState::Ready:      return "Ready";
+        case StepState::Queued:     return "Queued";
+        case StepState::Executing:  return "Executing";
+        case StepState::Succeeded:  return "Succeeded";
+        case StepState::Failed:     return "Failed";
+        case StepState::Cancelled:  return "Cancelled";
+    }
+    return "Unknown";
+}
+
 } // namespace crddagt
