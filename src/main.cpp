@@ -3,6 +3,7 @@
  */
 #include "crddagt/common/common.hpp"
 #include "crddagt/common/opaque_ptr_key.hpp"
+#include "crddagt/common/graph_builder.hpp"
 
 int main(int argc, char** argv)
 {
