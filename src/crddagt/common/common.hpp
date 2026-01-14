@@ -2,8 +2,11 @@
  * @file common.hpp
  */
 #pragma once
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <limits>
